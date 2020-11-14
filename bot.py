@@ -21,8 +21,10 @@
 import asyncio
 import logging
 import re
+import sys
 from configparser import ConfigParser
 
+import aioredis
 import pyrogram
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -36,29 +38,39 @@ PASSCODE = re.compile(r'^\w{5,20}$')
 
 
 class Tracker:
-    def __init__(self, api_id: int, api_hash: str, bot_token: str,  conn: PasscodeTracker, channel_id: int):
+    def __init__(self, api_id: int, api_hash: str, bot_token: str, conn: PasscodeTracker, channel_id: int,
+                 password: str, redis: aioredis.Redis):
         self.app = Client('passcode', api_id=api_id, api_hash=api_hash, bot_token=bot_token)
         self.conn = conn
         self.channel_id = channel_id
+        self.password = password
+        self.redis = redis
         self.init_message_handler()
 
     def init_message_handler(self) -> None:
+        self.app.add_handler(MessageHandler(self.handle_auth, filters.command('auth') & filters.private))
+        self.app.add_handler(MessageHandler(self.pre_check, filters.text & filters.private))
         self.app.add_handler(MessageHandler(self.handle_passcode, filters.text & filters.private))
         self.app.add_handler(CallbackQueryHandler(self.handle_callback_query))
 
     async def start(self) -> None:
-        await self.app.start()
+        await asyncio.gather(self.app.start(), self._load_users())
 
     @staticmethod
     async def idle() -> None:
         await pyrogram.idle()
 
     async def stop(self) -> None:
-        await self.app.stop()
+        self.redis.close()
+        await asyncio.gather(self.app.stop(),
+                             self.redis.wait_closed())
 
     @classmethod
-    async def new(cls, api_id: int, api_hash: str, bot_token: str, file_name: str, channel_id: int) -> 'Tracker':
-        return cls(api_id, api_hash, bot_token, await PasscodeTracker.create(file_name, renew=True), channel_id)
+    async def new(cls, api_id: int, api_hash: str, bot_token: str, file_name: str, channel_id: int,
+                  password: str, *, debug_mode: bool = False) -> 'Tracker':
+        self = cls(api_id, api_hash, bot_token, await PasscodeTracker.new(file_name, renew=debug_mode),
+                   channel_id, password, await aioredis.create_redis_pool('redis://localhost'))
+        return self
 
     async def handle_passcode(self, client: Client, msg: Message) -> None:
         if len(msg.text) > 30:
@@ -84,7 +96,6 @@ class Tracker:
         if len(args) != 3:
             return
         _msg_text = f'<del>{args[1]}</del>' if args[0] == 'm' else f'<code>{args[1]}</code>'
-        logger.debug("_msg_text => %s", _msg_text)
         await asyncio.gather(
             client.edit_message_text(self.channel_id, int(args[2]), _msg_text, 'html'),
             self.conn.update(args[1], args[0] == 'm'),
@@ -92,15 +103,38 @@ class Tracker:
             msg.answer(),
         )
 
-    async def handle_auth(self) -> None:
-        pass
+    async def handle_auth(self, _client: Client, msg: Message) -> None:
+        if len(msg.command) == 2 and msg.command[1] == self.password and \
+                not await self.query_authorized_user(msg.chat.id):
+            await self.insert_authorized_user(msg.chat.id)
+            await msg.reply('Authorized')
+
+    async def pre_check(self, client: Client, msg: Message) -> None:
+        if await self.conn.query_user(msg.chat.id):
+            msg.continue_propagation()
+
+    async def query_authorized_user(self, user_id: int) -> bool:
+        return await self.redis.sismember('tracker_user', str(user_id))
+
+    async def insert_authorized_user(self, user_id: int) -> None:
+        logger.info('Insert user %d to database', user_id)
+        await asyncio.gather(self.conn.insert_user(user_id),
+                             self.redis.sadd("tracker_user", str(user_id)))
+
+    async def _load_users(self) -> None:
+        await self.redis.delete('tracker_user')
+        async for x in self.conn.query_all_user():
+            await self.redis.sadd('tracker_user', str(x))
+        logger.info('Load users successful')
 
 
-async def main():
+async def main(debug: bool = False):
     config = ConfigParser()
     config.read('config.ini')
     bot = await Tracker.new(config.getint('telegram', 'api_id'), config.get('telegram', 'api_hash'),
-                      config.get('telegram', 'bot_token'), 'codes.db', config.getint('telegram', 'channel'))
+                            config.get('telegram', 'bot_token'), 'codes.db', config.getint('telegram', 'channel'),
+                            config.get('telegram', 'password'),
+                            debug_mode=debug)
     await bot.start()
     await bot.idle()
     await bot.stop()
@@ -116,4 +150,4 @@ if __name__ == '__main__':
                             format='%(asctime)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s')
     logging.getLogger('pyrogram').setLevel(logging.WARNING)
     logging.getLogger('aiosqlite').setLevel(logging.WARNING)
-    asyncio.get_event_loop().run_until_complete(main())
+    asyncio.get_event_loop().run_until_complete(main(len(sys.argv) > 1 and sys.argv[1] == 'debug'))

@@ -20,7 +20,7 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Generator, Optional, Tuple
 
 import asyncio
 import aiosqlite
@@ -70,7 +70,7 @@ class PasscodeTracker:
         self.lock = asyncio.Lock()
 
     @classmethod
-    async def create(cls, file_name: str, *, renew: bool = False) -> 'PasscodeTracker':
+    async def new(cls, file_name: str, *, renew: bool = False) -> 'PasscodeTracker':
         if renew:
             os.remove(file_name)
         async with aiosqlite.connect(file_name) as db:
@@ -113,8 +113,28 @@ class PasscodeTracker:
 
     async def query_history(self, s: str) -> Optional[Tuple[str, int]]:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
-            async with db.execute('''SELECT * FROM "history" WHERE "str" LIKE %s''', (s,)) as cursor:
+            async with db.execute('''SELECT * FROM "history" WHERE "str" LIKE ?''', (f'{s}%',)) as cursor:
                 r = await cursor.fetchone()
                 if r is None:
                     return None
                 return r
+
+    async def query_user(self, user_id: int) -> bool:
+        async with self.lock, aiosqlite.connect(self.file_name) as db:
+            async with db.execute('''SELECT * FROM "users" WHERE "id" = ?''', (user_id,)) as cursor:
+                r = await cursor.fetchone()
+                if r is None or not r[1]:
+                    return False
+                return True
+
+    async def query_all_user(self) -> Generator[int, None, None]:
+        async with self.lock, aiosqlite.connect(self.file_name) as db:
+            async with db.execute('''SELECT * FROM "users" WHERE "authorized" = 1''') as cursor:
+                for user_row in await cursor.fetchall():
+                    yield user_row[0]
+
+    async def insert_user(self, user_id: int) -> None:
+        async with self.lock, aiosqlite.connect(self.file_name) as db:
+            async with db.execute('''INSERT INTO "users" VALUES (?, 1)''', (user_id,)):
+                pass
+            await db.commit()

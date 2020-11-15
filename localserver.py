@@ -22,6 +22,7 @@ import asyncio
 import logging
 import sys
 from configparser import ConfigParser
+from typing import NoReturn
 
 import pyrogram
 from aiohttp import web
@@ -65,7 +66,10 @@ class Receiver:
         return web.Response(text=text)
 
     async def start_server(self) -> None:
+        async def wrapper(_request: web.Request) -> NoReturn:
+            raise web.HTTPForbidden
         self.website.router.add_get(self.website_prefix, self.handle_web_request)
+        self.website.router.add_get('/', wrapper)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.bind, self.port)
         await self.site.start()

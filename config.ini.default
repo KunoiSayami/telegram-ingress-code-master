@@ -4,3 +4,8 @@ api_hash =
 bot_token =
 channel =
 password =
+
+[server]
+listen_to =
+bot_token =
+default_prefix =

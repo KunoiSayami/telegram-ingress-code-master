@@ -6,6 +6,10 @@ channel =
 password =
 
 [server]
-listen_to =
+listen_user =
 bot_token =
+
+[web]
+bind = 127.0.0.1
+port = 29985
 default_prefix =

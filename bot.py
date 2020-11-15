@@ -150,4 +150,4 @@ if __name__ == '__main__':
                             format='%(asctime)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s')
     logging.getLogger('pyrogram').setLevel(logging.WARNING)
     logging.getLogger('aiosqlite').setLevel(logging.WARNING)
-    asyncio.get_event_loop().run_until_complete(main(len(sys.argv) > 1 and sys.argv[1] == 'debug'))
+    asyncio.get_event_loop().run_until_complete(main(len(sys.argv) > 1 and sys.argv[1] == '--debug'))

@@ -30,12 +30,15 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.handlers import MessageHandler
 
+from libsqlite import CodeStorage
+
 logger = logging.getLogger('Receiver')
 logger.setLevel(logging.DEBUG)
 
 
 class Receiver:
-    def __init__(self, api_id: int, api_hash: str, bot_token: str, channel: str, prefix: str, bind: str, port: int):
+    def __init__(self, api_id: int, api_hash: str, bot_token: str, channel: str, prefix: str, bind: str, port: int,
+                 conn: CodeStorage):
         self.api_id = api_id
         self.api_hash = api_hash
         self.bot_token = bot_token
@@ -50,19 +53,20 @@ class Receiver:
         self.bind = bind
         self.port = port
         self.site = None
+        self.conn = conn
 
     def init_handle(self) -> None:
         self.bot.add_handler(MessageHandler(self.handle_incoming_passcode, filters.chat(self.channel) & filters.text))
 
     async def handle_incoming_passcode(self, _client: Client, msg: Message) -> None:
-        logger.info('Put passcode => %s', msg.text)
-        self.queue.put_nowait(msg.text)
+        # logger.info('Put passcode => %s', msg.text)
+        await self._put_code(msg.text)
 
     async def handle_web_request(self, _request: web.Request) -> web.StreamResponse:
         if self.queue.empty():
             return web.Response(status=204, content_type='text/html')
-        text = self.queue.get_nowait()
-        logger.debug('Get passcode => %s', text)
+        text = await self._pop_code()
+        # logger.debug('Get passcode => %s', text)
         return web.Response(text=text)
 
     async def start_server(self) -> None:
@@ -81,8 +85,8 @@ class Receiver:
 
     @classmethod
     async def new(cls, api_id: int, api_hash: str, bot_token: str, channel: str, prefix: str,
-                  bind: str, port: int) -> 'Receiver':
-        return cls(api_id, api_hash, bot_token, channel, prefix, bind, port)
+                  bind: str, port: int, conn: CodeStorage) -> 'Receiver':
+        return cls(api_id, api_hash, bot_token, channel, prefix, bind, port, conn)
 
     async def start_bot(self) -> None:
         await self.bot.start()
@@ -100,6 +104,18 @@ class Receiver:
     async def idle() -> None:
         await pyrogram.idle()
 
+    async def _put_code(self, code: str) -> str:
+        self.queue.put_nowait(code)
+        await self.conn.insert_code(code)
+        logger.info("insert code => %s to queue", code)
+        return code
+
+    async def _pop_code(self) -> str:
+        code = self.queue.get_nowait()
+        await self.conn.delete_code(code)
+        logger.info("delete code => %s from queue", code)
+        return code
+
 
 async def main(debug: bool = False) -> None:
     config = ConfigParser()
@@ -107,12 +123,12 @@ async def main(debug: bool = False) -> None:
     bot = await Receiver.new(config.getint('telegram', 'api_id'), config.get('telegram', 'api_hash'),
                              config.get('server', 'bot_token'), config.getint('server', 'listen_user'),
                              config.get('web', 'default_prefix'), config.get('web', 'bind'),
-                             config.getint('web', 'port', fallback=29985))
+                             config.getint('web', 'port', fallback=29985),
+                             await CodeStorage.new('codeserver.db', renew=debug))
 
     await bot.start()
     if debug:
-        for x in range(20):
-            bot.queue.put_nowait(f'test{x}')
+        await asyncio.gather(*[bot._put_code(f'test{x}') for x in range(20)])
     await bot.idle()
     await bot.stop()
 

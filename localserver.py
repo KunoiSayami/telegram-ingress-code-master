@@ -86,7 +86,10 @@ class Receiver:
     @classmethod
     async def new(cls, api_id: int, api_hash: str, bot_token: str, channel: str, prefix: str,
                   bind: str, port: int, conn: CodeStorage) -> 'Receiver':
-        return cls(api_id, api_hash, bot_token, channel, prefix, bind, port, conn)
+        self = cls(api_id, api_hash, bot_token, channel, prefix, bind, port, conn)
+        async for code in self.conn.iter_code():
+            await self._put_code(code)
+        return self
 
     async def start_bot(self) -> None:
         await self.bot.start()
@@ -125,10 +128,9 @@ async def main(debug: bool = False) -> None:
                              config.get('web', 'default_prefix'), config.get('web', 'bind'),
                              config.getint('web', 'port', fallback=29985),
                              await CodeStorage.new('codeserver.db', renew=debug))
-
-    await bot.start()
     if debug:
         await asyncio.gather(*[bot._put_code(f'test{x}') for x in range(20)])
+    await bot.start()
     await bot.idle()
     await bot.stop()
 
@@ -143,5 +145,6 @@ if __name__ == '__main__':
                             format='%(asctime)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s')
     logging.getLogger('pyrogram').setLevel(logging.WARNING)
     logging.getLogger('aiosqlite').setLevel(logging.WARNING)
+    logging.getLogger('aiohttp').setLevel(logging.WARNING)
     asyncio.get_event_loop().run_until_complete(main(len(sys.argv) > 1 and sys.argv[1] == '--debug'))
 

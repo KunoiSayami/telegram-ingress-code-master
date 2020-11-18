@@ -22,6 +22,7 @@ import asyncio
 import logging
 import sys
 from configparser import ConfigParser
+from queue import Queue
 from typing import NoReturn
 
 import pyrogram
@@ -44,7 +45,7 @@ class Receiver:
         self.bot_token = bot_token
         self.bot = Client('receiver', api_id=api_id, api_hash=api_hash, bot_token=bot_token)
         self.channel = channel
-        self.queue = asyncio.Queue()
+        self.queue = Queue()
         self.website_prefix = prefix
         if not self.website_prefix.startswith('/'):
             self.website_prefix = f'/{self.website_prefix}'
@@ -65,14 +66,21 @@ class Receiver:
     async def handle_web_request(self, _request: web.Request) -> web.StreamResponse:
         if self.queue.empty():
             return web.Response(status=204, content_type='text/html')
-        text = await self._pop_code()
+        text = self.queue.queue[0]
         # logger.debug('Get passcode => %s', text)
         return web.Response(text=text)
+
+    async def handle_delete_request(self, _request: web.Request) -> web.StreamResponse:
+        if self.queue.empty():
+            return web.Response(status=400)
+        await self._pop_code()
+        return web.Response(content_type='text/plain')
 
     async def start_server(self) -> None:
         async def wrapper(_request: web.Request) -> NoReturn:
             raise web.HTTPForbidden
         self.website.router.add_get(self.website_prefix, self.handle_web_request)
+        self.website.router.add_delete(self.website_prefix, self.handle_delete_request)
         self.website.router.add_get('/', wrapper)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.bind, self.port)

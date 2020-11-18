@@ -37,6 +37,10 @@ logger = logging.getLogger('Receiver')
 logger.setLevel(logging.DEBUG)
 
 
+class NeverFetched(Exception):
+    """If user never fetched code, but want to delete, exception will raised"""
+
+
 class Receiver:
     def __init__(self, api_id: int, api_hash: str, bot_token: str, channel: str, prefix: str, bind: str, port: int,
                  conn: CodeStorage):
@@ -55,6 +59,7 @@ class Receiver:
         self.port = port
         self.site = None
         self.conn = conn
+        self._fetched = False
 
     def init_handle(self) -> None:
         self.bot.add_handler(MessageHandler(self.handle_incoming_passcode, filters.chat(self.channel) & filters.text))
@@ -67,12 +72,15 @@ class Receiver:
         if self.queue.empty():
             return web.Response(status=204, content_type='text/html')
         text = self.queue.queue[0]
+        self._fetched = True
         # logger.debug('Get passcode => %s', text)
         return web.Response(text=text)
 
     async def handle_delete_request(self, _request: web.Request) -> web.StreamResponse:
         if self.queue.empty():
             return web.Response(status=400)
+        if not self._fetched:
+            return web.Response(status=400, text='Should fetch passcode first')
         await self._pop_code()
         return web.Response(content_type='text/plain')
 
@@ -122,6 +130,9 @@ class Receiver:
         return code
 
     async def _pop_code(self) -> str:
+        if not self._fetched:
+            raise NeverFetched
+        self._fetched = False
         code = self.queue.get_nowait()
         await self.conn.delete_code(code)
         logger.info("delete code => %s from queue", code)

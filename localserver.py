@@ -25,6 +25,7 @@ from configparser import ConfigParser
 from queue import Queue
 from typing import NoReturn
 
+import aiohttp_cors
 import pyrogram
 from aiohttp import web
 from pyrogram import Client, filters
@@ -54,12 +55,18 @@ class Receiver:
         if not self.website_prefix.startswith('/'):
             self.website_prefix = f'/{self.website_prefix}'
         self.website = web.Application()
-        self.runner = web.AppRunner(self.website)
         self.bind = bind
         self.port = port
         self.site = None
         self.conn = conn
         self._fetched = False
+        self.cors = aiohttp_cors.setup(self.website, defaults={
+            "*": aiohttp_cors.ResourceOptions(
+                    allow_credentials=True,
+                    expose_headers="*",
+                    allow_headers="*",
+            )})
+        self.runner = web.AppRunner(self.website)
 
     def init_handle(self) -> None:
         self.bot.add_handler(MessageHandler(self.handle_incoming_passcode, filters.chat(self.channel) & filters.text))
@@ -68,7 +75,7 @@ class Receiver:
         # logger.info('Put passcode => %s', msg.text)
         await self._put_code(msg.text)
 
-    async def handle_web_request(self, _request: web.Request) -> web.StreamResponse:
+    async def handle_get_request(self, _request: web.Request) -> web.StreamResponse:
         if self.queue.empty():
             return web.Response(status=204, content_type='text/html')
         text = self.queue.queue[0]
@@ -78,18 +85,21 @@ class Receiver:
 
     async def handle_delete_request(self, _request: web.Request) -> web.StreamResponse:
         if self.queue.empty():
-            return web.Response(status=400)
+            return web.Response(status=400, text='Queue is empty!')
         if not self._fetched:
             return web.Response(status=400, text='Should fetch passcode first')
         await self._pop_code()
         return web.Response(content_type='text/plain')
 
     async def start_server(self) -> None:
-        async def wrapper(_request: web.Request) -> NoReturn:
+        async def inner_handle(_request: web.Request) -> NoReturn:
             raise web.HTTPForbidden
-        self.website.router.add_get(self.website_prefix, self.handle_web_request)
-        self.website.router.add_delete(self.website_prefix, self.handle_delete_request)
-        self.website.router.add_get('/', wrapper)
+        # self.website.router.add_get(self.website_prefix, self.handle_get_request)
+        # self.website.router.add_delete(self.website_prefix, self.handle_delete_request)
+        resource = self.cors.add(self.website.router.add_resource(self.website_prefix))
+        self.website.router.add_get('/', inner_handle)
+        self.cors.add(resource.add_route('GET', self.handle_get_request))
+        self.cors.add(resource.add_route('DELETE', self.handle_delete_request))
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.bind, self.port)
         await self.site.start()
@@ -124,6 +134,8 @@ class Receiver:
         await pyrogram.idle()
 
     async def _put_code(self, code: str) -> str:
+        if code in self.queue.queue:
+            return code
         self.queue.put_nowait(code)
         await self.conn.insert_code(code)
         logger.info("insert code => %s to queue", code)

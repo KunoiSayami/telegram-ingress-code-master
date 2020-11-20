@@ -19,15 +19,18 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 import asyncio
+import json
 import logging
 import sys
 from configparser import ConfigParser
 from queue import Queue
 from typing import NoReturn
 
+import aiohttp
 import aiohttp_cors
 import pyrogram
 from aiohttp import web
+from deprecated import deprecated
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.handlers import MessageHandler
@@ -75,6 +78,39 @@ class Receiver:
         # logger.info('Put passcode => %s', msg.text)
         await self._put_code(msg.text)
 
+    @staticmethod
+    def build_response_json(status: int, body: str = '') -> str:
+        return json.dumps({'status': status, 'body': body}, indent=' ' * 4, separators=(': ', ','))
+
+    async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        print(request.remote)
+        await ws.prepare(request)
+        async for msg in ws:
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                if msg.data == 'close':
+                    await ws.close()
+                elif msg.data == 'fetch':
+                    if self.queue.empty():
+                        await ws.send_str(self.build_response_json(204))
+                        continue
+                    await ws.send_str(self.build_response_json(200, self.queue.queue[0]))
+                    self._fetched = True
+                elif msg.data == 'delete':
+                    if self.queue.empty():
+                        await ws.send_str(self.build_response_json(400, 'Queue is empty!'))
+                        continue
+                    if not self._fetched:
+                        await ws.send_str(self.build_response_json(400, 'Should fetch passcode first'))
+                    await asyncio.gather(self._pop_code(), ws.send_str(self.build_response_json(200)))
+                else:
+                    await ws.send_str(self.build_response_json(403, 'Forbidden'))
+            elif msg.type == aiohttp.WSMsgType.ERROR:
+                logger.exception('ws connection closed with exception', ws.exception())
+        logger.info('websocket connection closed')
+        return ws
+
+    @deprecated(version='2.0.0', reason='Please use websocket to connect this server')
     async def handle_get_request(self, _request: web.Request) -> web.StreamResponse:
         if self.queue.empty():
             return web.Response(status=204, content_type='text/html')
@@ -83,6 +119,7 @@ class Receiver:
         # logger.debug('Get passcode => %s', text)
         return web.Response(text=text)
 
+    @deprecated(version='2.0.0', reason='Please use websocket to connect this server')
     async def handle_delete_request(self, _request: web.Request) -> web.StreamResponse:
         if self.queue.empty():
             return web.Response(status=400, text='Queue is empty!')
@@ -96,6 +133,7 @@ class Receiver:
             raise web.HTTPForbidden
         resource = self.cors.add(self.website.router.add_resource(self.website_prefix))
         self.website.router.add_get('/', inner_handle)
+        self.website.router.add_get('/ws', self.handle_websocket)
         self.cors.add(resource.add_route('GET', self.handle_get_request))
         self.cors.add(resource.add_route('DELETE', self.handle_delete_request))
         await self.runner.setup()

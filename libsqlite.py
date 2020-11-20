@@ -85,7 +85,10 @@ class SqliteBase(metaclass=ABCMeta):
     @classmethod
     async def _new(cls, file_name: str, drop_statement: str, create_statement: str, *, main_table_name: str, renew: bool = False) -> 'SqliteBase':
         if renew:
-            os.remove(file_name)
+            try:
+                os.remove(file_name)
+            except FileNotFoundError:
+                pass
         async with aiosqlite.connect(file_name) as db:
             async with db.execute('''SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? ''',
                                   (main_table_name,)) as cursor:

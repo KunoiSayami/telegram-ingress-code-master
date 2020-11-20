@@ -94,8 +94,6 @@ class Receiver:
     async def start_server(self) -> None:
         async def inner_handle(_request: web.Request) -> NoReturn:
             raise web.HTTPForbidden
-        # self.website.router.add_get(self.website_prefix, self.handle_get_request)
-        # self.website.router.add_delete(self.website_prefix, self.handle_delete_request)
         resource = self.cors.add(self.website.router.add_resource(self.website_prefix))
         self.website.router.add_get('/', inner_handle)
         self.cors.add(resource.add_route('GET', self.handle_get_request))
@@ -160,7 +158,10 @@ async def main(debug: bool = False) -> None:
                              config.getint('web', 'port', fallback=29985),
                              await CodeStorage.new('codeserver.db', renew=debug))
     if debug:
-        await asyncio.gather(*[bot._put_code(f'test{x}') for x in range(20)])
+        import aiofiles
+        async with aiofiles.open("passcode.txt") as fin:
+            for code in (await fin.read()).splitlines():
+                await bot._put_code(code)
     await bot.start()
     await bot.idle()
     await bot.stop()

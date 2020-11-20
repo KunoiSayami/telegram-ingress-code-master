@@ -109,3 +109,4 @@ config.ini
 *.db
 
 *.session
+passcode.*

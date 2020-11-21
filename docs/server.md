@@ -15,7 +15,7 @@ python3 localserver.py
 
 ```ini
 [telegram]
-; Obtain api_id or api_hash them from telegram
+; Obtain api_id and api_hash them from telegram
 api_id =
 api_hash =
 

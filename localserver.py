@@ -256,11 +256,11 @@ if __name__ == '__main__':
     logging.getLogger('aiohttp').setLevel(logging.WARNING)
 
     awaiter = None
-    if len(sys.argv):
+    if len(sys.argv) > 2:
         if sys.argv[1] == '--debug':
-            main(debug=True)
+            awaiter = main(debug=True)
         elif sys.argv[1] == '--load':
-            main(load_from_file=True)
+            awaiter = main(load_from_file=True)
         else:
             awaiter = main()
     else:

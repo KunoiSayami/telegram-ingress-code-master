@@ -1,15 +1,36 @@
 [telegram]
+; Obtain api_id and api_hash them from telegram
 api_id =
 api_hash =
+; Bot token for poster
 bot_token =
+; Set bot post channel
 channel =
+; Authorization password
 password =
 
+
 [server]
+; Specify listen only message from user id
 listen_user =
+; Bot token listen message from listen_user
 bot_token =
 
 [web]
+; Server bind address
 bind = 127.0.0.1
+; Server listen port
 port = 29985
+; Server fetch prefix
+; e.g. set default_prefix to "ws"
+; Connect to server use ws://localhost:29985/ws
 default_prefix =
+
+; Server ssl option
+; If enabled, please connect server use wss://
+[ssl]
+enabled = false
+; pem file location
+pem = cert.pem
+; key file location
+key = cert.key

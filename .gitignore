@@ -110,3 +110,8 @@ config.ini
 
 *.session
 passcode.*
+
+# self signed certificate
+*.crt
+*.pem
+*.key

@@ -22,11 +22,11 @@ import asyncio
 import json
 import logging
 import signal
-import sys
+import ssl
 import weakref
 from configparser import ConfigParser
 from queue import Queue
-from typing import NoReturn
+from typing import NoReturn, Optional
 from types import FrameType
 
 import aiofiles
@@ -44,7 +44,8 @@ class NeverFetched(Exception):
 
 
 class WebServer:
-    def __init__(self, prefix: str, bind: str, port: int, conn: CodeStorage):
+    def __init__(self, prefix: str, bind: str, port: int, conn: CodeStorage,
+                 ssl_context: Optional[web.SSLContext] = None):
         self.queue = Queue()
         self.website_prefix = prefix
         if not self.website_prefix.startswith('/'):
@@ -58,10 +59,12 @@ class WebServer:
         self.runner = web.AppRunner(self.website)
         self.website['websockets'] = weakref.WeakSet()
         self._idled = False
+        self.ssl_context = ssl_context
 
     @classmethod
-    async def new(cls, prefix: str, bind: str, port: int, conn: CodeStorage):
-        self = cls(prefix, bind, port, conn)
+    async def new(cls, prefix: str, bind: str, port: int, conn: CodeStorage,
+                  ssl_context: Optional[web.SSLContext] = None):
+        self = cls(prefix, bind, port, conn, ssl_context)
         async for code in self.conn.iter_code():
             await self.put_code(code, from_storage=True)
         return self
@@ -117,7 +120,7 @@ class WebServer:
         self.website.router.add_get(self.website_prefix, self.handle_websocket)
         self.website.on_shutdown.append(self.handle_web_shutdown)
         await self.runner.setup()
-        self.site = web.TCPSite(self.runner, self.bind, self.port)
+        self.site = web.TCPSite(self.runner, self.bind, self.port, ssl_context=self.ssl_context)
         await self.site.start()
         logger.info('Start server on %s:%d', self.bind, self.port)
 
@@ -158,11 +161,20 @@ class WebServer:
 
     @classmethod
     async def load_from_cfg(cls, config: ConfigParser, debug: bool = False) -> 'WebServer':
+        ssl_context = None
+        if config.getboolean('ssl', 'enabled', fallback=False):
+            logger.info('SSL is enabled.')
+            ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ssl_context.load_cert_chain(
+                config.get('ssl', 'pem', fallback='cert.pem'),
+                config.get('ssl', 'key', fallback='cert.key')
+            )
         return await cls.new(
             config.get('web', 'default_prefix'),
             config.get('web', 'bind'),
             config.getint('web', 'port', fallback=29985),
-            await CodeStorage.new('codeserver.db', renew=debug)
+            await CodeStorage.new('codeserver.db', renew=debug),
+            ssl_context
         )
 
 

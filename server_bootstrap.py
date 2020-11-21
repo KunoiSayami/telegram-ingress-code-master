@@ -31,6 +31,10 @@ if __name__ == '__main__':
         logging.basicConfig(level=logging.DEBUG,
                             format='%(asctime)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s')
 
+    logging.getLogger('aiosqlite').setLevel(logging.WARNING)
+    logging.getLogger('aiohttp').setLevel(logging.WARNING)
+    logging.getLogger('pyrogram').setLevel(logging.WARNING)
+
     debug_mode = '--debug' in sys.argv
     _load_from_file = '--load' in sys.argv
     server_core_only = '--nbot' in sys.argv
@@ -39,9 +43,5 @@ if __name__ == '__main__':
         from server.localserver import main
     else:
         from server.receiver import main
-        logging.getLogger('pyrogram').setLevel(logging.WARNING)
-
-    logging.getLogger('aiosqlite').setLevel(logging.WARNING)
-    logging.getLogger('aiohttp').setLevel(logging.WARNING)
 
     asyncio.get_event_loop().run_until_complete(main(debug_mode, _load_from_file))

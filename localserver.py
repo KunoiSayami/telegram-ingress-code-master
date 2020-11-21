@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import sys
+import weakref
 from configparser import ConfigParser
 from queue import Queue
 from typing import NoReturn
@@ -70,6 +71,7 @@ class Receiver:
                     allow_headers="*",
             )})
         self.runner = web.AppRunner(self.website)
+        self.website['websockets'] = weakref.WeakSet()
 
     def init_handle(self) -> None:
         self.bot.add_handler(MessageHandler(self.handle_incoming_passcode, filters.chat(self.channel) & filters.text))
@@ -80,34 +82,39 @@ class Receiver:
 
     @staticmethod
     def build_response_json(status: int, body: str = '') -> str:
-        return json.dumps({'status': status, 'body': body}, indent=' ' * 4, separators=(': ', ','))
+        return json.dumps({'status': status, 'body': body}, indent=' ' * 4, separators=(',', ': '))
 
     async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
         print(request.remote)
         await ws.prepare(request)
-        async for msg in ws:
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                logger.debug('ws message => %s', msg.data)
-                if msg.data == 'close':
-                    await ws.close()
-                elif msg.data == 'fetch':
-                    if self.queue.empty():
-                        await ws.send_str(self.build_response_json(204))
-                        continue
-                    await ws.send_str(self.build_response_json(200, self.queue.queue[0]))
-                    self._fetched = True
-                elif msg.data == 'delete':
-                    if self.queue.empty():
-                        await ws.send_str(self.build_response_json(400, 'Queue is empty!'))
-                        continue
-                    if not self._fetched:
-                        await ws.send_str(self.build_response_json(400, 'Should fetch passcode first'))
-                    await asyncio.gather(self._pop_code(), ws.send_str(self.build_response_json(200)))
-                else:
-                    await ws.send_str(self.build_response_json(403, 'Forbidden'))
-            elif msg.type == aiohttp.WSMsgType.ERROR:
-                logger.exception('ws connection closed with exception', ws.exception())
+        request.app['websockets'].add(ws)
+        try:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    logger.debug('ws message => %s', msg.data)
+                    if msg.data == 'close':
+                        await ws.close()
+                    elif msg.data == 'fetch':
+                        if self.queue.empty():
+                            await ws.send_str(self.build_response_json(204))
+                            continue
+                        await ws.send_str(self.build_response_json(200, self.queue.queue[0]))
+                        self._fetched = True
+                    elif msg.data == 'delete':
+                        if self.queue.empty():
+                            await ws.send_str(self.build_response_json(400, 'Queue is empty!'))
+                            continue
+                        if not self._fetched:
+                            await ws.send_str(self.build_response_json(400, 'Should fetch passcode first'))
+                            continue
+                        await asyncio.gather(self._pop_code(), ws.send_str(self.build_response_json(200)))
+                    else:
+                        await ws.send_str(self.build_response_json(403, 'Forbidden'))
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.exception('ws connection closed with exception', ws.exception())
+        finally:
+            request.app['websockets'].discard(ws)
         logger.info('websocket connection closed')
         return ws
 
@@ -129,6 +136,10 @@ class Receiver:
         await self._pop_code()
         return web.Response(content_type='text/plain')
 
+    async def handle_web_shutdown(self, app: web.Application) -> None:
+        for ws in set(app['websockets']):
+            await ws.close(code=aiohttp.WSCloseCode.GOING_AWAY, message='Server shutdown')
+
     async def start_server(self) -> None:
         async def inner_handle(_request: web.Request) -> NoReturn:
             raise web.HTTPForbidden
@@ -137,6 +148,7 @@ class Receiver:
         self.website.router.add_get('/ws', self.handle_websocket)
         self.cors.add(resource.add_route('GET', self.handle_get_request))
         self.cors.add(resource.add_route('DELETE', self.handle_delete_request))
+        self.website.on_shutdown.append(self.handle_web_shutdown)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.bind, self.port)
         await self.site.start()

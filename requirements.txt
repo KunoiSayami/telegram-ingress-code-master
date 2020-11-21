@@ -3,4 +3,4 @@ Pyrogram~=1.0.7
 aiosqlite~=0.15.0
 aiohttp~=3.7.2
 Deprecated~=1.2.10
-coloredlogs~=14.0
+aiohttp-cors~=0.7.0

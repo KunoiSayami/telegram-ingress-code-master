@@ -1,5 +1,9 @@
 # Telegram ingress code poster
 
+## About version
+
+This project is rolling currently, stable version will release on release page. 
+
 ## Server configure
 
 Following [here](docs/server.md).

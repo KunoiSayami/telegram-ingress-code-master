@@ -19,14 +19,13 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 import asyncio
-import json
 import logging
 import signal
 import ssl
 import weakref
 from configparser import ConfigParser
 from queue import Queue
-from typing import NoReturn, Optional
+from typing import Dict, NoReturn, Optional, Union
 from types import FrameType
 
 import aiofiles
@@ -70,10 +69,10 @@ class WebServer:
         return self
 
     @staticmethod
-    def build_response_json(status: int, body: str = '') -> str:
-        return json.dumps({'status': status, 'body': body}, indent=' ' * 4, separators=(',', ': '))
+    def build_response_json(status: int, body: str = '') -> Dict[str, Union[str, int]]:
+        return {'status': status, 'body': body}
 
-    async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
+    async def handle_websocket_passive(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
         logger.info('Accept websocket from %s', request.remote)
         await ws.prepare(request)
@@ -83,24 +82,22 @@ class WebServer:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     if msg.data == 'close':
                         await ws.close()
-                    elif msg.data == 'ping':
-                        await ws.send_str(self.build_response_json(101))
                     elif msg.data == 'fetch':
                         if self.queue.empty():
-                            await ws.send_str(self.build_response_json(204))
+                            await ws.send_json(self.build_response_json(204))
                             continue
-                        await ws.send_str(self.build_response_json(200, self.queue.queue[0]))
+                        await ws.send_json(self.build_response_json(200, self.queue.queue[0]))
                         self._fetched = True
                     elif msg.data == 'delete':
                         if self.queue.empty():
-                            await ws.send_str(self.build_response_json(400, 'Queue is empty!'))
+                            await ws.send_json(self.build_response_json(400, 'Queue is empty!'))
                             continue
                         if not self._fetched:
-                            await ws.send_str(self.build_response_json(400, 'Should fetch passcode first'))
+                            await ws.send_json(self.build_response_json(400, 'Should fetch passcode first'))
                             continue
-                        await asyncio.gather(self.pop_code(), ws.send_str(self.build_response_json(200)))
+                        await asyncio.gather(self.pop_code(), ws.send_json(self.build_response_json(200)))
                     else:
-                        await ws.send_str(self.build_response_json(403, 'Forbidden'))
+                        await ws.send_json(self.build_response_json(403, 'Forbidden'))
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.exception('ws connection closed with exception', ws.exception())
         finally:
@@ -117,7 +114,7 @@ class WebServer:
         async def inner_handle(_request: web.Request) -> NoReturn:
             raise web.HTTPForbidden
         self.website.router.add_get('/', inner_handle)
-        self.website.router.add_get(self.website_prefix, self.handle_websocket)
+        self.website.router.add_get(self.website_prefix, self.handle_websocket_passive)
         self.website.on_shutdown.append(self.handle_web_shutdown)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.bind, self.port, ssl_context=self.ssl_context)

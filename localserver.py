@@ -88,6 +88,7 @@ class Receiver:
         await ws.prepare(request)
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
+                logger.debug('ws message => %s', msg.data)
                 if msg.data == 'close':
                     await ws.close()
                 elif msg.data == 'fetch':
@@ -150,7 +151,7 @@ class Receiver:
                   bind: str, port: int, conn: CodeStorage) -> 'Receiver':
         self = cls(api_id, api_hash, bot_token, channel, prefix, bind, port, conn)
         async for code in self.conn.iter_code():
-            await self._put_code(code)
+            await self._put_code(code, from_storage=True)
         return self
 
     async def start_bot(self) -> None:
@@ -169,11 +170,12 @@ class Receiver:
     async def idle() -> None:
         await pyrogram.idle()
 
-    async def _put_code(self, code: str) -> str:
+    async def _put_code(self, code: str, *, from_storage: bool = False) -> str:
         if code in self.queue.queue:
             return code
         self.queue.put_nowait(code)
-        await self.conn.insert_code(code)
+        if not from_storage:
+            await self.conn.insert_code(code)
         logger.info("insert code => %s to queue", code)
         return code
 

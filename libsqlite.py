@@ -17,13 +17,13 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
+import asyncio
 import logging
 import os
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from typing import Generator, Optional, Tuple
 
-import asyncio
 import aiosqlite
 
 logger = logging.getLogger("code_poster").getChild("sqlite")

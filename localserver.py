@@ -27,6 +27,7 @@ from configparser import ConfigParser
 from queue import Queue
 from typing import NoReturn
 
+import aiofiles
 import aiohttp
 import aiohttp_cors
 import pyrogram
@@ -80,13 +81,12 @@ class WebServer:
 
     async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
-        print(request.remote)
+        logger.info('Accept websocket from %s', request.remote)
         await ws.prepare(request)
         request.app['websockets'].add(ws)
         try:
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
-                    logger.debug('ws message => %s', msg.data)
                     if msg.data == 'close':
                         await ws.close()
                     elif msg.data == 'fetch':
@@ -130,7 +130,8 @@ class WebServer:
         await self.pop_code()
         return web.Response(content_type='text/plain')
 
-    async def handle_web_shutdown(self, app: web.Application) -> None:
+    @staticmethod
+    async def handle_web_shutdown(app: web.Application) -> None:
         for ws in set(app['websockets']):
             await ws.close(code=aiohttp.WSCloseCode.GOING_AWAY, message='Server shutdown')
 
@@ -172,24 +173,29 @@ class WebServer:
 
 
 class Receiver:
-    def __init__(self, api_id: int, api_hash: str, bot_token: str, channel: str, website: WebServer):
+    def __init__(self, api_id: int, api_hash: str, bot_token: str, listen_user: str, website: WebServer):
         self.api_id = api_id
         self.api_hash = api_hash
         self.bot_token = bot_token
         self.bot = Client('receiver', api_id=api_id, api_hash=api_hash, bot_token=bot_token)
-        self.channel = channel
+        self.listen_user = listen_user
         self.website = website
 
     def init_handle(self) -> None:
-        self.bot.add_handler(MessageHandler(self.handle_incoming_passcode, filters.chat(self.channel) & filters.text))
+        self.bot.add_handler(
+            MessageHandler(self.handle_incoming_passcode, filters.chat(self.listen_user) & filters.text))
 
     async def handle_incoming_passcode(self, _client: Client, msg: Message) -> None:
         # logger.info('Put passcode => %s', msg.text)
-        await self.website.put_code(msg.text)
+        if '\n' in msg.text:
+            for code in msg.text.splitlines():
+                await self.website.put_code(code.strip())
+        else:
+            await self.website.put_code(msg.text)
 
     @classmethod
-    async def new(cls, api_id: int, api_hash: str, bot_token: str, channel: str, website: WebServer) -> 'Receiver':
-        return cls(api_id, api_hash, bot_token, channel, website)
+    async def new(cls, api_id: int, api_hash: str, bot_token: str, listen_user: str, website: WebServer) -> 'Receiver':
+        return cls(api_id, api_hash, bot_token, listen_user, website)
 
     async def start_bot(self) -> None:
         await self.bot.start()
@@ -208,7 +214,7 @@ class Receiver:
         await pyrogram.idle()
 
 
-async def main(debug: bool = False) -> None:
+async def main(debug: bool = False, load_from_file: bool = False) -> None:
     config = ConfigParser()
     config.read('config.ini')
     bot = await Receiver.new(
@@ -223,13 +229,14 @@ async def main(debug: bool = False) -> None:
             await CodeStorage.new('codeserver.db', renew=debug)
         )
     )
-    if debug:
-        import aiofiles
+
+    if debug or load_from_file:
         async with aiofiles.open("passcode.txt") as fin:
             for code in await fin.readlines():
                 if len(code) == 0:
                     break
                 await bot.website.put_code(code.strip())
+
     await bot.start()
     await bot.idle()
     await bot.stop()
@@ -243,8 +250,19 @@ if __name__ == '__main__':
     except ModuleNotFoundError:
         logging.basicConfig(level=logging.DEBUG,
                             format='%(asctime)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s')
+
     logging.getLogger('pyrogram').setLevel(logging.WARNING)
     logging.getLogger('aiosqlite').setLevel(logging.WARNING)
     logging.getLogger('aiohttp').setLevel(logging.WARNING)
-    asyncio.get_event_loop().run_until_complete(main(len(sys.argv) > 1 and sys.argv[1] == '--debug'))
 
+    awaiter = None
+    if len(sys.argv):
+        if sys.argv[1] == '--debug':
+            main(debug=True)
+        elif sys.argv[1] == '--load':
+            main(load_from_file=True)
+        else:
+            awaiter = main()
+    else:
+        awaiter = main()
+    asyncio.get_event_loop().run_until_complete(awaiter)

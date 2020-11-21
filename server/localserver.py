@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# localserver.py
+# server.py
 # Copyright (C) 2020 KunoiSayami
 #
 # This module is part of telegram-ingress-code-poster and is released under
@@ -31,11 +31,7 @@ from types import FrameType
 
 import aiofiles
 import aiohttp
-import pyrogram
 from aiohttp import web
-from pyrogram import Client, filters
-from pyrogram.types import Message
-from pyrogram.handlers import MessageHandler
 
 from libsqlite import CodeStorage
 
@@ -160,58 +156,20 @@ class WebServer:
         logger.debug('Got signal %s, stopping...', signal_)
         self._idled = False
 
-
-class Receiver:
-    def __init__(self, api_id: int, api_hash: str, bot_token: str, listen_user: str, website: WebServer):
-        self.api_id = api_id
-        self.api_hash = api_hash
-        self.bot_token = bot_token
-        self.bot = Client('receiver', api_id=api_id, api_hash=api_hash, bot_token=bot_token)
-        self.listen_user = listen_user
-        self.website = website
-
-    def init_handle(self) -> None:
-        self.bot.add_handler(
-            MessageHandler(self.handle_incoming_passcode, filters.chat(self.listen_user) & filters.text))
-
-    async def handle_incoming_passcode(self, _client: Client, msg: Message) -> None:
-        # logger.info('Put passcode => %s', msg.text)
-        if '\n' in msg.text:
-            for code in msg.text.splitlines():
-                await self.website.put_code(code.strip())
-        else:
-            await self.website.put_code(msg.text)
-
     @classmethod
-    async def new(cls, api_id: int, api_hash: str, bot_token: str, listen_user: str, website: WebServer) -> 'Receiver':
-        return cls(api_id, api_hash, bot_token, listen_user, website)
-
-    async def start_bot(self) -> None:
-        await self.bot.start()
-
-    async def stop_bot(self) -> None:
-        await self.bot.stop()
-
-    async def start(self) -> None:
-        await asyncio.gather(self.start_bot(), self.website.start_server())
-
-    async def stop(self) -> None:
-        await asyncio.gather(self.stop_bot(), self.website.stop_server())
-
-    @staticmethod
-    async def idle() -> None:
-        await pyrogram.idle()
+    async def load_from_cfg(cls, config: ConfigParser, debug: bool = False) -> 'WebServer':
+        return await cls.new(
+            config.get('web', 'default_prefix'),
+            config.get('web', 'bind'),
+            config.getint('web', 'port', fallback=29985),
+            await CodeStorage.new('codeserver.db', renew=debug)
+        )
 
 
-async def main(debug: bool, load_from_file: bool, server_only: bool) -> None:
+async def main(debug: bool, load_from_file: bool) -> None:
     config = ConfigParser()
     config.read('config.ini')
-    website = await WebServer.new(
-        config.get('web', 'default_prefix'),
-        config.get('web', 'bind'),
-        config.getint('web', 'port', fallback=29985),
-        await CodeStorage.new('codeserver.db', renew=debug)
-    )
+    website = await WebServer.load_from_cfg(config, debug)
 
     if debug or load_from_file:
         async with aiofiles.open('passcode.txt') as fin:
@@ -220,40 +178,6 @@ async def main(debug: bool, load_from_file: bool, server_only: bool) -> None:
                     break
                 await website.put_code(code.strip())
 
-    if not server_only:
-        bot = await Receiver.new(
-            config.getint('telegram', 'api_id'),
-            config.get('telegram', 'api_hash'),
-            config.get('server', 'bot_token'),
-            config.getint('server', 'listen_user'),
-            website
-        )
-
-        await bot.start()
-        await bot.idle()
-        await bot.stop()
-    else:
-        logger.info('Running on server core only mode')
-        await website.start_server()
-        await website.idle()
-        await website.stop_server()
-
-
-if __name__ == '__main__':
-    try:
-        import coloredlogs
-        coloredlogs.install(logging.DEBUG,
-                            fmt='%(asctime)s,%(msecs)03d - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s')
-    except ModuleNotFoundError:
-        logging.basicConfig(level=logging.DEBUG,
-                            format='%(asctime)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s')
-
-    logging.getLogger('pyrogram').setLevel(logging.WARNING)
-    logging.getLogger('aiosqlite').setLevel(logging.WARNING)
-    logging.getLogger('aiohttp').setLevel(logging.WARNING)
-
-    _server_only = '--nbot' in sys.argv
-    debug_mode = '--debug' in sys.argv
-    _load_from_file = '--load' in sys.argv
-
-    asyncio.get_event_loop().run_until_complete(main(debug_mode, _load_from_file, _server_only))
+    await website.start_server()
+    await website.idle()
+    await website.stop_server()

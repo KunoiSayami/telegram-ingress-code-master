@@ -46,14 +46,8 @@ class NeverFetched(Exception):
     """If user never fetched code, but want to delete, exception will raised"""
 
 
-class Receiver:
-    def __init__(self, api_id: int, api_hash: str, bot_token: str, channel: str, prefix: str, bind: str, port: int,
-                 conn: CodeStorage):
-        self.api_id = api_id
-        self.api_hash = api_hash
-        self.bot_token = bot_token
-        self.bot = Client('receiver', api_id=api_id, api_hash=api_hash, bot_token=bot_token)
-        self.channel = channel
+class WebServer:
+    def __init__(self, prefix: str, bind: str, port: int, conn: CodeStorage):
         self.queue = Queue()
         self.website_prefix = prefix
         if not self.website_prefix.startswith('/'):
@@ -73,12 +67,12 @@ class Receiver:
         self.runner = web.AppRunner(self.website)
         self.website['websockets'] = weakref.WeakSet()
 
-    def init_handle(self) -> None:
-        self.bot.add_handler(MessageHandler(self.handle_incoming_passcode, filters.chat(self.channel) & filters.text))
-
-    async def handle_incoming_passcode(self, _client: Client, msg: Message) -> None:
-        # logger.info('Put passcode => %s', msg.text)
-        await self._put_code(msg.text)
+    @classmethod
+    async def new(cls, prefix: str, bind: str, port: int, conn: CodeStorage):
+        self = cls(prefix, bind, port, conn)
+        async for code in self.conn.iter_code():
+            await self.put_code(code, from_storage=True)
+        return self
 
     @staticmethod
     def build_response_json(status: int, body: str = '') -> str:
@@ -108,7 +102,7 @@ class Receiver:
                         if not self._fetched:
                             await ws.send_str(self.build_response_json(400, 'Should fetch passcode first'))
                             continue
-                        await asyncio.gather(self._pop_code(), ws.send_str(self.build_response_json(200)))
+                        await asyncio.gather(self.pop_code(), ws.send_str(self.build_response_json(200)))
                     else:
                         await ws.send_str(self.build_response_json(403, 'Forbidden'))
                 elif msg.type == aiohttp.WSMsgType.ERROR:
@@ -133,7 +127,7 @@ class Receiver:
             return web.Response(status=400, text='Queue is empty!')
         if not self._fetched:
             return web.Response(status=400, text='Should fetch passcode first')
-        await self._pop_code()
+        await self.pop_code()
         return web.Response(content_type='text/plain')
 
     async def handle_web_shutdown(self, app: web.Application) -> None:
@@ -158,31 +152,7 @@ class Receiver:
         await self.site.stop()
         await self.runner.cleanup()
 
-    @classmethod
-    async def new(cls, api_id: int, api_hash: str, bot_token: str, channel: str, prefix: str,
-                  bind: str, port: int, conn: CodeStorage) -> 'Receiver':
-        self = cls(api_id, api_hash, bot_token, channel, prefix, bind, port, conn)
-        async for code in self.conn.iter_code():
-            await self._put_code(code, from_storage=True)
-        return self
-
-    async def start_bot(self) -> None:
-        await self.bot.start()
-
-    async def stop_bot(self) -> None:
-        await self.bot.stop()
-
-    async def start(self) -> None:
-        await asyncio.gather(self.start_bot(), self.start_server())
-
-    async def stop(self) -> None:
-        await asyncio.gather(self.stop_bot(), self.stop_server())
-
-    @staticmethod
-    async def idle() -> None:
-        await pyrogram.idle()
-
-    async def _put_code(self, code: str, *, from_storage: bool = False) -> str:
+    async def put_code(self, code: str, *, from_storage: bool = False) -> str:
         if code in self.queue.queue:
             return code
         self.queue.put_nowait(code)
@@ -191,7 +161,7 @@ class Receiver:
         logger.info("insert code => %s to queue", code)
         return code
 
-    async def _pop_code(self) -> str:
+    async def pop_code(self) -> str:
         if not self._fetched:
             raise NeverFetched
         self._fetched = False
@@ -201,19 +171,65 @@ class Receiver:
         return code
 
 
+class Receiver:
+    def __init__(self, api_id: int, api_hash: str, bot_token: str, channel: str, website: WebServer):
+        self.api_id = api_id
+        self.api_hash = api_hash
+        self.bot_token = bot_token
+        self.bot = Client('receiver', api_id=api_id, api_hash=api_hash, bot_token=bot_token)
+        self.channel = channel
+        self.website = website
+
+    def init_handle(self) -> None:
+        self.bot.add_handler(MessageHandler(self.handle_incoming_passcode, filters.chat(self.channel) & filters.text))
+
+    async def handle_incoming_passcode(self, _client: Client, msg: Message) -> None:
+        # logger.info('Put passcode => %s', msg.text)
+        await self.website.put_code(msg.text)
+
+    @classmethod
+    async def new(cls, api_id: int, api_hash: str, bot_token: str, channel: str, website: WebServer) -> 'Receiver':
+        return cls(api_id, api_hash, bot_token, channel, website)
+
+    async def start_bot(self) -> None:
+        await self.bot.start()
+
+    async def stop_bot(self) -> None:
+        await self.bot.stop()
+
+    async def start(self) -> None:
+        await asyncio.gather(self.start_bot(), self.website.start_server())
+
+    async def stop(self) -> None:
+        await asyncio.gather(self.stop_bot(), self.website.stop_server())
+
+    @staticmethod
+    async def idle() -> None:
+        await pyrogram.idle()
+
+
 async def main(debug: bool = False) -> None:
     config = ConfigParser()
     config.read('config.ini')
-    bot = await Receiver.new(config.getint('telegram', 'api_id'), config.get('telegram', 'api_hash'),
-                             config.get('server', 'bot_token'), config.getint('server', 'listen_user'),
-                             config.get('web', 'default_prefix'), config.get('web', 'bind'),
-                             config.getint('web', 'port', fallback=29985),
-                             await CodeStorage.new('codeserver.db', renew=debug))
+    bot = await Receiver.new(
+        config.getint('telegram', 'api_id'),
+        config.get('telegram', 'api_hash'),
+        config.get('server', 'bot_token'),
+        config.getint('server', 'listen_user'),
+        await WebServer.new(
+            config.get('web', 'default_prefix'),
+            config.get('web', 'bind'),
+            config.getint('web', 'port', fallback=29985),
+            await CodeStorage.new('codeserver.db', renew=debug)
+        )
+    )
     if debug:
         import aiofiles
         async with aiofiles.open("passcode.txt") as fin:
-            for code in (await fin.read()).splitlines():
-                await bot._put_code(code)
+            for code in await fin.readlines():
+                if len(code) == 0:
+                    break
+                await bot.website.put_code(code.strip())
     await bot.start()
     await bot.idle()
     await bot.stop()

@@ -29,10 +29,8 @@ from typing import NoReturn
 
 import aiofiles
 import aiohttp
-import aiohttp_cors
 import pyrogram
 from aiohttp import web
-from deprecated import deprecated
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.handlers import MessageHandler
@@ -59,12 +57,6 @@ class WebServer:
         self.site = None
         self.conn = conn
         self._fetched = False
-        self.cors = aiohttp_cors.setup(self.website, defaults={
-            "*": aiohttp_cors.ResourceOptions(
-                    allow_credentials=True,
-                    expose_headers="*",
-                    allow_headers="*",
-            )})
         self.runner = web.AppRunner(self.website)
         self.website['websockets'] = weakref.WeakSet()
 
@@ -89,6 +81,8 @@ class WebServer:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     if msg.data == 'close':
                         await ws.close()
+                    elif msg.data == 'ping':
+                        await ws.send_str(self.build_response_json(101))
                     elif msg.data == 'fetch':
                         if self.queue.empty():
                             await ws.send_str(self.build_response_json(204))
@@ -112,24 +106,6 @@ class WebServer:
         logger.info('websocket connection closed')
         return ws
 
-    @deprecated(version='2.0.0', reason='Please use websocket to connect this server')
-    async def handle_get_request(self, _request: web.Request) -> web.StreamResponse:
-        if self.queue.empty():
-            return web.Response(status=204, content_type='text/html')
-        text = self.queue.queue[0]
-        self._fetched = True
-        # logger.debug('Get passcode => %s', text)
-        return web.Response(text=text)
-
-    @deprecated(version='2.0.0', reason='Please use websocket to connect this server')
-    async def handle_delete_request(self, _request: web.Request) -> web.StreamResponse:
-        if self.queue.empty():
-            return web.Response(status=400, text='Queue is empty!')
-        if not self._fetched:
-            return web.Response(status=400, text='Should fetch passcode first')
-        await self.pop_code()
-        return web.Response(content_type='text/plain')
-
     @staticmethod
     async def handle_web_shutdown(app: web.Application) -> None:
         for ws in set(app['websockets']):
@@ -138,11 +114,8 @@ class WebServer:
     async def start_server(self) -> None:
         async def inner_handle(_request: web.Request) -> NoReturn:
             raise web.HTTPForbidden
-        resource = self.cors.add(self.website.router.add_resource(self.website_prefix))
         self.website.router.add_get('/', inner_handle)
-        self.website.router.add_get('/ws', self.handle_websocket)
-        self.cors.add(resource.add_route('GET', self.handle_get_request))
-        self.cors.add(resource.add_route('DELETE', self.handle_delete_request))
+        self.website.router.add_get(self.website_prefix, self.handle_websocket)
         self.website.on_shutdown.append(self.handle_web_shutdown)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.bind, self.port)
@@ -231,7 +204,7 @@ async def main(debug: bool = False, load_from_file: bool = False) -> None:
     )
 
     if debug or load_from_file:
-        async with aiofiles.open("passcode.txt") as fin:
+        async with aiofiles.open('passcode.txt') as fin:
             for code in await fin.readlines():
                 if len(code) == 0:
                     break

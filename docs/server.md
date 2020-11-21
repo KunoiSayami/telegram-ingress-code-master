@@ -4,7 +4,7 @@
 * Fill all blanks except section (`telegram`, `bot_token`), (`telegram`, `channel`), (`telegram`, `password`)
 * Install requirements
 ```shell script
-pip install aiofiles aiohttp aiohttp_cors deprecated pyrogram aiosqlite
+pip install aiofiles aiohttp pyrogram aiosqlite
 ```
 * Start server
 ```shell script
@@ -31,6 +31,8 @@ bind = 127.0.0.1
 ; Server listen port
 port = 29985
 ; Server fetch prefix
+; e.g. set default_prefix to "ws"
+; Connect to server use ws://localhost:29985/ws
 default_prefix =
 ```
 

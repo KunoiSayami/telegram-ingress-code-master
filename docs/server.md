@@ -1,7 +1,8 @@
 ## Usage
 
 * Copy `config.ini.default` to `config.ini`
-* Fill all blanks except section (`telegram`, `bot_token`), (`telegram`, `channel`), (`telegram`, `password`)
+* Fill `web` section in configure file if you want to start web server only.
+* Fill all blanks except option (`telegram`, `bot_token`), (`telegram`, `channel`), (`telegram`, `password`)
 * Install requirements
 ```shell script
 pip install aiofiles aiohttp pyrogram aiosqlite
@@ -39,7 +40,15 @@ default_prefix =
 ## Load from local
 
 * If you want to read passcode from local, put passcode to `passcode.txt`, one passcode each line.
-* Run server with `--load` parameters
+* Run server with `--load` parameter.
 ```shell script
 python3 localserver.py --load
+```
+
+## Server core only
+
+* If you want to run web server only, use `--nbot` parameter.
+
+```shell script
+python3 localserver.py --nbot
 ```

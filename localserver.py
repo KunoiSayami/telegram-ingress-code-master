@@ -21,11 +21,13 @@
 import asyncio
 import json
 import logging
+import signal
 import sys
 import weakref
 from configparser import ConfigParser
 from queue import Queue
 from typing import NoReturn
+from types import FrameType
 
 import aiofiles
 import aiohttp
@@ -59,6 +61,7 @@ class WebServer:
         self._fetched = False
         self.runner = web.AppRunner(self.website)
         self.website['websockets'] = weakref.WeakSet()
+        self._idled = False
 
     @classmethod
     async def new(cls, prefix: str, bind: str, port: int, conn: CodeStorage):
@@ -132,7 +135,7 @@ class WebServer:
         self.queue.put_nowait(code)
         if not from_storage:
             await self.conn.insert_code(code)
-        logger.info("insert code => %s to queue", code)
+        logger.debug("insert code => %s to queue", code)
         return code
 
     async def pop_code(self) -> str:
@@ -141,8 +144,21 @@ class WebServer:
         self._fetched = False
         code = self.queue.get_nowait()
         await self.conn.delete_code(code)
-        logger.info("delete code => %s from queue", code)
+        logger.debug("delete code => %s from queue", code)
         return code
+
+    async def idle(self):
+        self._idled = True
+
+        for sig in (signal.SIGINT, signal.SIGABRT, signal.SIGTERM):
+            signal.signal(sig, self._reset_idle)
+
+        while self._idled:
+            await asyncio.sleep(1)
+
+    def _reset_idle(self, signal_: signal.Signals, _frame_type: FrameType) -> None:
+        logger.debug('Got signal %s, stopping...', signal_)
+        self._idled = False
 
 
 class Receiver:
@@ -187,20 +203,14 @@ class Receiver:
         await pyrogram.idle()
 
 
-async def main(debug: bool = False, load_from_file: bool = False) -> None:
+async def main(debug: bool, load_from_file: bool, server_only: bool) -> None:
     config = ConfigParser()
     config.read('config.ini')
-    bot = await Receiver.new(
-        config.getint('telegram', 'api_id'),
-        config.get('telegram', 'api_hash'),
-        config.get('server', 'bot_token'),
-        config.getint('server', 'listen_user'),
-        await WebServer.new(
-            config.get('web', 'default_prefix'),
-            config.get('web', 'bind'),
-            config.getint('web', 'port', fallback=29985),
-            await CodeStorage.new('codeserver.db', renew=debug)
-        )
+    website = await WebServer.new(
+        config.get('web', 'default_prefix'),
+        config.get('web', 'bind'),
+        config.getint('web', 'port', fallback=29985),
+        await CodeStorage.new('codeserver.db', renew=debug)
     )
 
     if debug or load_from_file:
@@ -208,11 +218,25 @@ async def main(debug: bool = False, load_from_file: bool = False) -> None:
             for code in await fin.readlines():
                 if len(code) == 0:
                     break
-                await bot.website.put_code(code.strip())
+                await website.put_code(code.strip())
 
-    await bot.start()
-    await bot.idle()
-    await bot.stop()
+    if not server_only:
+        bot = await Receiver.new(
+            config.getint('telegram', 'api_id'),
+            config.get('telegram', 'api_hash'),
+            config.get('server', 'bot_token'),
+            config.getint('server', 'listen_user'),
+            website
+        )
+
+        await bot.start()
+        await bot.idle()
+        await bot.stop()
+    else:
+        logger.info('Running on server core only mode')
+        await website.start_server()
+        await website.idle()
+        await website.stop_server()
 
 
 if __name__ == '__main__':
@@ -228,14 +252,8 @@ if __name__ == '__main__':
     logging.getLogger('aiosqlite').setLevel(logging.WARNING)
     logging.getLogger('aiohttp').setLevel(logging.WARNING)
 
-    awaiter = None
-    if len(sys.argv) > 2:
-        if sys.argv[1] == '--debug':
-            awaiter = main(debug=True)
-        elif sys.argv[1] == '--load':
-            awaiter = main(load_from_file=True)
-        else:
-            awaiter = main()
-    else:
-        awaiter = main()
-    asyncio.get_event_loop().run_until_complete(awaiter)
+    _server_only = '--nbot' in sys.argv
+    debug_mode = '--debug' in sys.argv
+    _load_from_file = '--load' in sys.argv
+
+    asyncio.get_event_loop().run_until_complete(main(debug_mode, _load_from_file, _server_only))

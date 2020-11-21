@@ -27,3 +27,7 @@ pip install aiofiles aiohttp pyrogram aiosqlite
 ```shell script
 ./server_bootstrap.py --nbot
 ```
+
+## Configure ssl
+
+Following [here](cert.md)

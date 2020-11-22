@@ -42,13 +42,13 @@ _CREATE_STATEMENT_PasscodeTracker = '''
         "fr"	        INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY("str")
     );
-    
+
     CREATE TABLE "users" (
         "id"            INTEGER NOT NULL,
         "authorized"    INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY("id")
     );
-    
+
     CREATE TABLE "history" (
         "str"   TEXT NOT NULL,
         "send_by" INTEGER NOT NULL
@@ -57,13 +57,21 @@ _CREATE_STATEMENT_PasscodeTracker = '''
 
 _CREATE_STATEMENT_CodeStorage = '''
     CREATE TABLE "storage" (
-        "code"	        TEXT NOT NULL,
-        PRIMARY KEY("code")
+        "code"	TEXT NOT NULL UNIQUE,
+        "id"	INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT
+    );
+
+    CREATE TABLE "user_status" (
+        "user_id"	TEXT NOT NULL,
+        "index"	INTEGER,
+        PRIMARY KEY("user_id")
     );
 '''
 
 _DROP_STATEMENT_CodeStorage = '''
     DROP TABLE IF EXISTS "storage";
+    DROP TABLE IF EXISTS "sqlite_sequence";
+    DROP TABLE IF EXISTS "user_status";
 '''
 
 
@@ -176,11 +184,15 @@ class CodeStorage(SqliteBase):
         return await cls._new(file_name, _DROP_STATEMENT_CodeStorage, _CREATE_STATEMENT_CodeStorage,
                               main_table_name='storage', renew=renew)
 
-    async def insert_code(self, code: str) -> None:
+    async def insert_code(self, code: str) -> bool:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
-            async with db.execute('''INSERT INTO "storage" VALUES (?)''', (code,)):
+            async with db.execute('''SELECT * FROM "storage" WHERE "code" = ? ''', (code,)) as cursor:
+                if await cursor.fetchone() is not None:
+                    return False
+            async with db.execute('''INSERT INTO "storage" ("code") VALUES (?)''', (code,)):
                 pass
             await db.commit()
+            return True
 
     async def delete_code(self, code: str) -> None:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
@@ -188,8 +200,37 @@ class CodeStorage(SqliteBase):
                 pass
             await db.commit()
 
-    async def iter_code(self) -> Generator[str, None, None]:
+    @staticmethod
+    async def update_user_index(db: aiosqlite.Connection, user: str, index: int, insert: bool = False) -> None:
+        if insert:
+            async with db.execute('''INSERT INTO "user_status" VALUES (?, ?)''', (user, index)):
+                pass
+        else:
+            async with db.execute('''UPDATE "user_status" SET "index" = ? WHERE "user_id" = ?''', (index, user)):
+                pass
+        await db.commit()
+
+    async def request_next_code(self, user: str) -> Optional[str]:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
-            async with db.execute('''SELECT * FROM "storage"''') as cursor:
-                for row in await cursor.fetchall():
-                    yield row[0]
+            async with db.execute('''SELECT "index" FROM "user_status" WHERE "user_id" = ?''', (user,)) as cursor:
+                obj = await cursor.fetchone()
+                if obj is None:
+                    async with db.execute('''SELECT * FROM "storage" ORDER BY "id" ASC LIMIT 1''') as cursor1:
+                        obj = await cursor1.fetchone()
+                        if obj is None:
+                            return None
+                        passcode, current_num = obj
+                    await self.update_user_index(db, user, current_num, True)
+                else:
+                    current_num = obj[0]
+                    async with db.execute('''SELECT * FROM "storage" WHERE "id" > ? ORDER BY "id" ASC LIMIT 1''',
+                                          (current_num,)) as cursor1:
+                        obj = await cursor1.fetchone()
+                        if obj is None:
+                            return None
+                        passcode, current_num = obj
+                    await self.update_user_index(db, user, current_num)
+            return passcode
+
+    async def update_user_status(self, user: str) -> None:
+        pass

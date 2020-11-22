@@ -20,9 +20,11 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 import asyncio
 import logging
+import hashlib
 import signal
 import ssl
 import weakref
+import warnings
 from configparser import ConfigParser
 from queue import Queue
 from typing import Dict, NoReturn, Optional, Union
@@ -46,9 +48,9 @@ class WebServer:
     def __init__(self, prefix: str, bind: str, port: int, conn: CodeStorage,
                  ssl_context: Optional[web.SSLContext] = None):
         self.queue = Queue()
-        self.website_prefix = prefix
-        if not self.website_prefix.startswith('/'):
-            self.website_prefix = f'/{self.website_prefix}'
+        self.ws_prefix = prefix
+        if not self.ws_prefix.startswith('/'):
+            self.ws_prefix = f'/{self.ws_prefix}'
         self.website = web.Application()
         self.bind = bind
         self.port = port
@@ -59,49 +61,76 @@ class WebServer:
         self.website['websockets'] = weakref.WeakSet()
         self._idled = False
         self.ssl_context = ssl_context
+        self._request_stop = False
 
     @classmethod
     async def new(cls, prefix: str, bind: str, port: int, conn: CodeStorage,
                   ssl_context: Optional[web.SSLContext] = None):
         self = cls(prefix, bind, port, conn, ssl_context)
-        async for code in self.conn.iter_code():
-            await self.put_code(code, from_storage=True)
         return self
 
     @staticmethod
-    def build_response_json(status: int, body: str = '') -> Dict[str, Union[str, int]]:
-        return {'status': status, 'body': body}
+    def build_response_json(status: int, sub_status: int = 0, /, body: str = '') -> Dict[str, Union[str, int]]:
+        return {'status': status, 'sub': sub_status, 'body': body}
 
-    async def handle_websocket_passive(self, request: web.Request) -> web.WebSocketResponse:
+    @staticmethod
+    def get_hash(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
+        identify_id = ''
+        last_code = None
+        next_code_request = False
         ws = web.WebSocketResponse()
         logger.info('Accept websocket from %s', request.remote)
         await ws.prepare(request)
         request.app['websockets'].add(ws)
         try:
-            async for msg in ws:
+            task = asyncio.create_task(ws.receive())
+            while not self._request_stop:
+                if next_code_request:
+                    last_code = await self.conn.request_next_code(identify_id)
+                    if last_code is not None:
+                        await ws.send_json(self.build_response_json(200, 0, last_code))
+                        next_code_request = False
+
+                finish, _pending = await asyncio.wait([task], timeout=1)
+                if len(finish):
+                    msg = finish.pop().result()
+                else:
+                    if self._request_stop:
+                        task.cancel()
+                        await ws.close()
+                        break
+                    continue
+
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     if msg.data == 'close':
                         await ws.close()
-                    elif msg.data == 'fetch':
-                        if self.queue.empty():
-                            await ws.send_json(self.build_response_json(204))
+                        break
+                    elif msg.data.startswith('register'):
+                        group = msg.data.split()
+                        if len(group) < 2:
+                            await ws.send_json(self.build_response_json(400, 2, 'Bad register request'))
                             continue
-                        await ws.send_json(self.build_response_json(200, self.queue.queue[0]))
-                        self._fetched = True
-                    elif msg.data == 'delete':
-                        if self.queue.empty():
-                            await ws.send_json(self.build_response_json(400, 'Queue is empty!'))
+                        identify_id = self.get_hash(group[-1])
+                        next_code_request = True
+                    elif msg.data == 'continue':
+                        if identify_id == '':
+                            await ws.send_json(self.build_response_json(400, 1, 'register required'))
                             continue
-                        if not self._fetched:
-                            await ws.send_json(self.build_response_json(400, 'Should fetch passcode first'))
-                            continue
-                        await asyncio.gather(self.pop_code(), ws.send_json(self.build_response_json(200)))
+                        next_code_request = True
+                    elif msg.data == 'FR':
+                        await self.conn.delete_code(last_code)
                     else:
-                        await ws.send_json(self.build_response_json(403, 'Forbidden'))
+                        await ws.send_json(self.build_response_json(403, body='Forbidden'))
+                    task = asyncio.create_task(ws.receive())
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.exception('ws connection closed with exception', ws.exception())
+                    break
         finally:
             request.app['websockets'].discard(ws)
+
         logger.info('websocket connection closed')
         return ws
 
@@ -114,7 +143,7 @@ class WebServer:
         async def inner_handle(_request: web.Request) -> NoReturn:
             raise web.HTTPForbidden
         self.website.router.add_get('/', inner_handle)
-        self.website.router.add_get(self.website_prefix, self.handle_websocket_passive)
+        self.website.router.add_get(self.ws_prefix, self.handle_websocket)
         self.website.on_shutdown.append(self.handle_web_shutdown)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.bind, self.port, ssl_context=self.ssl_context)
@@ -122,6 +151,7 @@ class WebServer:
         logger.info('Start server on %s:%d', self.bind, self.port)
 
     async def stop_server(self) -> None:
+        self._request_stop = True
         await self.site.stop()
         await self.runner.cleanup()
 
@@ -130,17 +160,9 @@ class WebServer:
             return code
         self.queue.put_nowait(code)
         if not from_storage:
-            await self.conn.insert_code(code)
-        logger.debug("insert code => %s to queue", code)
-        return code
-
-    async def pop_code(self) -> str:
-        if not self._fetched:
-            raise NeverFetched
-        self._fetched = False
-        code = self.queue.get_nowait()
-        await self.conn.delete_code(code)
-        logger.debug("delete code => %s from queue", code)
+            if not await self.conn.insert_code(code):
+                return code
+        logger.debug("Insert code => %s to database", code)
         return code
 
     async def idle(self):
@@ -156,6 +178,16 @@ class WebServer:
         logger.debug('Got signal %s, stopping...', signal_)
         self._idled = False
 
+    @staticmethod
+    def get_prefix(config: ConfigParser) -> str:
+        ws_ = config.get('web', 'ws_prefix', fallback=None)
+        if ws_ is None:
+            ws_2 = config.get('web', 'default_prefix')
+            warnings.warn("The default_prefix argument is deprecated since version 2.2.1",
+                          DeprecationWarning, stacklevel=2)
+            return ws_2
+        return ws_
+
     @classmethod
     async def load_from_cfg(cls, config: ConfigParser, debug: bool = False) -> 'WebServer':
         ssl_context = None
@@ -167,7 +199,7 @@ class WebServer:
                 config.get('ssl', 'key', fallback='cert.key')
             )
         return await cls.new(
-            config.get('web', 'default_prefix'),
+            cls.get_prefix(config),
             config.get('web', 'bind'),
             config.getint('web', 'port', fallback=29985),
             await CodeStorage.new('codeserver.db', renew=debug),
@@ -180,7 +212,8 @@ async def main(debug: bool, load_from_file: bool) -> None:
     config.read('config.ini')
     website = await WebServer.load_from_cfg(config, debug)
 
-    if debug or load_from_file:
+    if load_from_file:
+        logger.debug('Insert passcode to database')
         async with aiofiles.open('passcode.txt') as fin:
             for code in await fin.readlines():
                 if len(code) == 0:

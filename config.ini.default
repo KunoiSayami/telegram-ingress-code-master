@@ -24,7 +24,7 @@ port = 29985
 ; Server fetch prefix
 ; e.g. set default_prefix to "ws"
 ; Connect to server use ws://localhost:29985/ws
-default_prefix =
+ws_prefix =
 
 ; Server ssl option
 ; If enabled, please connect server use wss://

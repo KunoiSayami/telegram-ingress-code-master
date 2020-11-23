@@ -19,6 +19,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 import asyncio
+import concurrent.futures
 import logging
 import hashlib
 import signal
@@ -42,6 +43,47 @@ logger.setLevel(logging.DEBUG)
 
 class NeverFetched(Exception):
     """If user never fetched code, but want to delete, exception will raised"""
+
+
+class WsCoroutine:
+    def __init__(self, ws: web.WebSocketResponse, conn: CodeStorage, request_send: asyncio.Event):
+        self.ws = ws
+        self.conn = conn
+        self.request_send = request_send
+        self.stop_event = asyncio.Event()
+        self._identify_id = ''
+        self.last_code = None
+
+    async def runnable(self) -> None:
+        while True:
+            if self.request_send.is_set():
+                self.last_code = await self.conn.request_next_code(self.identify_id)
+                if self.last_code is not None:
+                    await self.ws.send_json(WebServer.build_response_json(200, 0, self.last_code))
+                    self.request_send.clear()
+            if self.stop_event.is_set():
+                return
+            await asyncio.sleep(0.5)
+
+    def req(self) -> None:
+        self.request_send.set()
+
+    def req_stop(self):
+        logger.debug('Request stop')
+        self.stop_event.set()
+
+    @property
+    def identify_id(self) -> str:
+        return self._identify_id
+
+    @identify_id.setter
+    def identify_id(self, identify_id: str) -> None:
+        self._identify_id = identify_id
+
+    async def delete_last_code(self) -> None:
+        if self.last_code is None:
+            await self.ws.send_json(WebServer.build_response_json(400, 3, 'Code not sent yet'))
+        await self.conn.delete_code(self.last_code)
 
 
 class WebServer:
@@ -78,32 +120,16 @@ class WebServer:
         return hashlib.sha256(text.encode()).hexdigest()
 
     async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
-        identify_id = ''
-        last_code = None
-        next_code_request = False
+        request_next_event = asyncio.Event()
         ws = web.WebSocketResponse()
         logger.info('Accept websocket from %s', request.remote)
+
         await ws.prepare(request)
         request.app['websockets'].add(ws)
+        wsc = WsCoroutine(ws, self.conn, request_next_event)
+        future = asyncio.run_coroutine_threadsafe(wsc.runnable(), asyncio.get_event_loop())
         try:
-            task = asyncio.create_task(ws.receive())
-            while not self._request_stop:
-                if next_code_request:
-                    last_code = await self.conn.request_next_code(identify_id)
-                    if last_code is not None:
-                        await ws.send_json(self.build_response_json(200, 0, last_code))
-                        next_code_request = False
-
-                finish, _pending = await asyncio.wait([task], timeout=1)
-                if len(finish):
-                    msg = finish.pop().result()
-                else:
-                    if self._request_stop:
-                        task.cancel()
-                        await ws.close()
-                        break
-                    continue
-
+            async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     if msg.data == 'close':
                         await ws.close()
@@ -113,24 +139,28 @@ class WebServer:
                         if len(group) < 2:
                             await ws.send_json(self.build_response_json(400, 2, 'Bad register request'))
                             continue
-                        identify_id = self.get_hash(group[-1])
-                        next_code_request = True
+                        wsc.identify_id = self.get_hash(group[-1])
+                        wsc.req()
                     elif msg.data == 'continue':
-                        if identify_id == '':
+                        if not len(wsc.identify_id):
                             await ws.send_json(self.build_response_json(400, 1, 'register required'))
                             continue
-                        next_code_request = True
+                        wsc.req()
                     elif msg.data == 'FR':
-                        await self.conn.delete_code(last_code)
+                        await wsc.delete_last_code()
                     else:
                         await ws.send_json(self.build_response_json(403, body='Forbidden'))
-                    task = asyncio.create_task(ws.receive())
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.exception('ws connection closed with exception', ws.exception())
                     break
         finally:
+            wsc.req_stop()
             request.app['websockets'].discard(ws)
-
+            try:
+                future.result(0.5)
+            except concurrent.futures.TimeoutError:
+                logger.warning('WsCoroutine is still running!')
+                future.cancel()
         logger.info('websocket connection closed')
         return ws
 

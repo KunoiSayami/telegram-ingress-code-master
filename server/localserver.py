@@ -22,6 +22,7 @@ import asyncio
 import concurrent.futures
 import logging
 import hashlib
+import os
 import signal
 import ssl
 import weakref
@@ -62,6 +63,7 @@ class WsCoroutine:
                     await self.ws.send_json(WebServer.build_response_json(200, 0, self.last_code))
                     self.request_send.clear()
             if self.stop_event.is_set():
+                logger.debug('Coroutine is quit')
                 return
             await asyncio.sleep(0.5)
 
@@ -156,11 +158,11 @@ class WebServer:
         finally:
             wsc.req_stop()
             request.app['websockets'].discard(ws)
-            try:
-                future.result(0.5)
-            except concurrent.futures.TimeoutError:
-                logger.warning('WsCoroutine is still running!')
-                future.cancel()
+            for _ in range(10):
+                await asyncio.sleep(0.05)
+                if not future.running():
+                    break
+            future.cancel()
         logger.info('websocket connection closed')
         return ws
 
@@ -205,8 +207,12 @@ class WebServer:
             await asyncio.sleep(1)
 
     def _reset_idle(self, signal_: signal.Signals, _frame_type: FrameType) -> None:
-        logger.debug('Got signal %s, stopping...', signal_)
-        self._idled = False
+        if not self._idled:
+            logger.debug('Got signal %s, killing...', signal_)
+            os.kill(os.getpid(), signal.SIGKILL)
+        else:
+            logger.debug('Got signal %s, stopping...', signal_)
+            self._idled = False
 
     @staticmethod
     def get_prefix(config: ConfigParser) -> str:

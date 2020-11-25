@@ -225,7 +225,7 @@ class CodeStorage(SqliteBase):
                 obj = await cursor.fetchone()
                 if obj is None:
                     async with db.execute('''
-                    SELECT * FROM "storage" 
+                    SELECT "code", "id" FROM "storage"
                     WHERE "FR" = 0 AND "other" = 0
                     ORDER BY "id" ASC LIMIT 1''') as cursor1:
                         obj = await cursor1.fetchone()
@@ -236,7 +236,7 @@ class CodeStorage(SqliteBase):
                 else:
                     current_num = obj[0]
                     async with db.execute('''
-                    SELECT * FROM "storage"
+                    SELECT "code", "id" FROM "storage"
                     WHERE "id" > ? AND "FR" = 0 AND "other" = 0
                     ORDER BY "id" ASC LIMIT 1''',
                                           (current_num,)) as cursor1:

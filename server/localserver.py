@@ -68,6 +68,7 @@ class WsCoroutine:
             await asyncio.sleep(0.5)
 
     def req(self) -> None:
+        logger.debug('Request new code')
         self.request_send.set()
 
     def req_stop(self):
@@ -160,6 +161,12 @@ class WebServer:
         finally:
             wsc.req_stop()
             request.app['websockets'].discard(ws)
+            try:
+                future.exception(timeout=1)
+            except concurrent.futures.TimeoutError:
+                pass
+            except:
+                logger.exception('Got exception while process coroutine')
         logger.info('websocket connection closed')
         return ws
 

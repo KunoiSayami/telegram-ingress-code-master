@@ -82,10 +82,10 @@ class WsCoroutine:
     def identify_id(self, identify_id: str) -> None:
         self._identify_id = identify_id
 
-    async def delete_last_code(self) -> None:
+    async def mark_last_code(self, is_fr: bool, is_other: bool) -> None:
         if self.last_code is None:
             await self.ws.send_json(WebServer.build_response_json(400, 3, 'Code not sent yet'))
-        await self.conn.delete_code(self.last_code)
+        await self.conn.mark_code(self.last_code, is_fr, is_other)
 
 
 class WebServer:
@@ -138,7 +138,7 @@ class WebServer:
                         break
                     elif msg.data.startswith('register'):
                         group = msg.data.split()
-                        if len(group) < 2:
+                        if len(group) != 2:
                             await ws.send_json(self.build_response_json(400, 2, 'Bad register request'))
                             continue
                         wsc.identify_id = self.get_hash(group[-1])
@@ -149,7 +149,9 @@ class WebServer:
                             continue
                         wsc.req()
                     elif msg.data == 'FR':
-                        await wsc.delete_last_code()
+                        await wsc.mark_last_code(True, False)
+                    elif msg.data == 'mark_other':
+                        await wsc.mark_last_code(False, True)
                     else:
                         await ws.send_json(self.build_response_json(403, body='Forbidden'))
                 elif msg.type == aiohttp.WSMsgType.ERROR:
@@ -158,11 +160,6 @@ class WebServer:
         finally:
             wsc.req_stop()
             request.app['websockets'].discard(ws)
-            for _ in range(10):
-                await asyncio.sleep(0.05)
-                if not future.running():
-                    break
-            future.cancel()
         logger.info('websocket connection closed')
         return ws
 
@@ -180,7 +177,9 @@ class WebServer:
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.bind, self.port, ssl_context=self.ssl_context)
         await self.site.start()
-        logger.info('Start server on %s:%d', self.bind, self.port)
+        logger.info('Listen websocket on ws%s://%s:%d%s',
+                    's' if self.ssl_context is not None else '',
+                    self.bind, self.port, self.ws_prefix)
 
     async def stop_server(self) -> None:
         self._request_stop = True
@@ -214,16 +213,6 @@ class WebServer:
             logger.debug('Got signal %s, stopping...', signal_)
             self._idled = False
 
-    @staticmethod
-    def get_prefix(config: ConfigParser) -> str:
-        ws_ = config.get('web', 'ws_prefix', fallback=None)
-        if ws_ is None:
-            ws_2 = config.get('web', 'default_prefix')
-            warnings.warn("The default_prefix argument is deprecated since version 2.2.1",
-                          DeprecationWarning, stacklevel=2)
-            return ws_2
-        return ws_
-
     @classmethod
     async def load_from_cfg(cls, config: ConfigParser, debug: bool = False) -> 'WebServer':
         ssl_context = None
@@ -235,7 +224,7 @@ class WebServer:
                 config.get('ssl', 'key', fallback='cert.key')
             )
         return await cls.new(
-            cls.get_prefix(config),
+            config.get('web', 'ws_prefix'),
             config.get('web', 'bind'),
             config.getint('web', 'port', fallback=29985),
             await CodeStorage.new('codeserver.db', renew=debug),

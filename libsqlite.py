@@ -58,7 +58,9 @@ _CREATE_STATEMENT_PasscodeTracker = '''
 _CREATE_STATEMENT_CodeStorage = '''
     CREATE TABLE "storage" (
         "code"	TEXT NOT NULL UNIQUE,
-        "id"	INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT
+        "id"	INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "FR"    INTEGER NOT NULL DEFAULT 0,
+        "other" INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE "user_status" (
@@ -200,6 +202,13 @@ class CodeStorage(SqliteBase):
                 pass
             await db.commit()
 
+    async def mark_code(self, code: str, is_fr: bool, other: bool = False) -> None:
+        async with self.lock, aiosqlite.connect(self.file_name) as db:
+            async with db.execute('''UPDATE "storage" SET "FR" = ?, "other" = ? WHERE "code" = ?''',
+                                  (code, int(is_fr), int(other))):
+                pass
+            await db.commit()
+
     @staticmethod
     async def update_user_index(db: aiosqlite.Connection, user: str, index: int, insert: bool = False) -> None:
         if insert:
@@ -215,7 +224,10 @@ class CodeStorage(SqliteBase):
             async with db.execute('''SELECT "index" FROM "user_status" WHERE "user_id" = ?''', (user,)) as cursor:
                 obj = await cursor.fetchone()
                 if obj is None:
-                    async with db.execute('''SELECT * FROM "storage" ORDER BY "id" ASC LIMIT 1''') as cursor1:
+                    async with db.execute('''
+                    SELECT * FROM "storage" 
+                    WHERE "FR" = 0 AND "other" = 0
+                    ORDER BY "id" ASC LIMIT 1''') as cursor1:
                         obj = await cursor1.fetchone()
                         if obj is None:
                             return None
@@ -223,7 +235,10 @@ class CodeStorage(SqliteBase):
                     await self.update_user_index(db, user, current_num, True)
                 else:
                     current_num = obj[0]
-                    async with db.execute('''SELECT * FROM "storage" WHERE "id" > ? ORDER BY "id" ASC LIMIT 1''',
+                    async with db.execute('''
+                    SELECT * FROM "storage"
+                    WHERE "id" > ? AND "FR" = 0 AND "other" = 0
+                    ORDER BY "id" ASC LIMIT 1''',
                                           (current_num,)) as cursor1:
                         obj = await cursor1.fetchone()
                         if obj is None:

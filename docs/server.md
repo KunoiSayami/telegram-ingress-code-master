@@ -9,7 +9,7 @@ pip install aiofiles aiohttp pyrogram aiosqlite
 ```
 * Start server
 ```shell script
-./server_bootstrap.py
+./webserver_bootstrap.py
 ```
 
 ## Load from local
@@ -17,7 +17,7 @@ pip install aiofiles aiohttp pyrogram aiosqlite
 * If you want to read passcode from local, put passcode to `passcode.txt`, one passcode each line.
 * Run server with `--load` parameter.
 ```shell script
-./server_bootstrap.py --load
+./webserver_bootstrap.py --load
 ```
 
 ## Server core only
@@ -25,7 +25,7 @@ pip install aiofiles aiohttp pyrogram aiosqlite
 * If you want to run web server only, use `--nbot` parameter.
 
 ```shell script
-./server_bootstrap.py --nbot
+./webserver_bootstrap.py --nbot
 ```
 
 ## Configure ssl

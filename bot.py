@@ -57,6 +57,7 @@ class Tracker:
         self.app.add_handler(CallbackQueryHandler(self.handle_callback_query))
         self.app.add_handler(MessageHandler(self.pre_check_owner, filters.text & filters.private))
         self.app.add_handler(MessageHandler(self.query_history, filters.command('h') & filters.private))
+        self.app.add_handler(MessageHandler(self.delete_user_manual, filters.command('del') & filters.private))
 
     async def start(self) -> None:
         await asyncio.gather(self.app.start(), self._load_users())
@@ -78,6 +79,9 @@ class Tracker:
         return self
 
     async def handle_passcode(self, client: Client, msg: Message) -> None:
+        if '\n' in msg.text:
+            await self.handle_multiline_passcode(client, msg)
+            return
         if len(msg.text) > 30:
             await msg.reply("Passcode length exceed")
             return
@@ -95,6 +99,31 @@ class Tracker:
                             reply_markup=InlineKeyboardMarkup([[
                                 InlineKeyboardButton(
                                     "Process", f"{'u' if result.FR else 'm'} {msg.text} {result.message_id}")]]))
+
+    @staticmethod
+    async def parse_codes(passcodes: List[str], header: str) -> str:
+        nl = '\n'
+        return f'{header} codes:\n\n<code>{f"</code>{nl}<code>".join(passcodes)}</code>\n' if passcodes else ''
+
+    async def handle_multiline_passcode(self, client: Client, msg: Message) -> None:
+        count = 0
+        error_codes = []
+        duplicate_codes = []
+        for passcode in msg.text.splitlines(False):
+            if len(passcode) > 30 or PASSCODE.match(passcode) is None:
+                error_codes.append(passcode)
+                continue
+            if await self.conn.query(passcode) is None:
+                _msg = await client.send_message(self.channel_id, f'<code>{msg.text}</code>', 'html')
+                count += 1
+                await asyncio.gather(self.conn.insert(passcode, _msg.message_id),
+                                     self.conn.insert_history(passcode, msg.chat.id),
+                                     asyncio.sleep(2))
+            else:
+                duplicate_codes.append(passcode)
+        error_msg = self.parse_codes(error_codes, 'Error')
+        duplicate_msg = self.parse_codes(error_codes, 'Duplicate')
+        await msg.reply(f'{error_msg}\n{duplicate_msg}\nSuccess send: {count} passcode(s)')
 
     async def handle_callback_query(self, client: Client, msg: CallbackQuery) -> None:
         args = msg.data.split()
@@ -134,6 +163,8 @@ class Tracker:
         )
 
     async def handle_auth(self, client: Client, msg: Message) -> None:
+        if await self.flood_check(msg.chat.id, 1200):
+            return
         if await self.query_authorized_user(msg.chat.id):
             await msg.reply('Already authorized')
             return
@@ -171,6 +202,12 @@ class Tracker:
         await asyncio.gather(self.conn.delete_user(user_id),
                              self.redis.srem("tracker_user", str(user_id)))
 
+    async def flood_check(self, user_id: int, timeout: int = 120) -> bool:
+        if await self.redis.get(user_id) is None:
+            await self.redis.set(f'flood_{user_id}', '1', expire=timeout)
+            return False
+        return True
+
     async def _load_users(self) -> None:
         await self.redis.delete('tracker_user')
         async for x in self.conn.query_all_user():
@@ -191,6 +228,16 @@ class Tracker:
             await msg.reply(f'Find match => {query_obj[0]}')
         else:
             await msg.reply('404 Not found')
+
+    async def delete_user_manual(self, client: Client, msg: Message) -> None:
+        if len(msg.command) != 2:
+            user_id = int(msg.command[1])
+            if await self.query_authorized_user(user_id):
+                await asyncio.gather(client.send_message(user_id, "Access revoked"),
+                                     self.delete_authorized_user(user_id),
+                                     msg.reply('Success'))
+            else:
+                await msg.reply('User not in authorized list')
 
 
 async def main(debug: bool = False):

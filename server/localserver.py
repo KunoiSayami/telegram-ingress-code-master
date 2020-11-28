@@ -173,7 +173,7 @@ class WebServer:
         for ws in set(app['websockets']):
             await ws.close(code=aiohttp.WSCloseCode.GOING_AWAY, message='Server shutdown')
 
-    async def start_server(self) -> None:
+    async def start(self) -> None:
         async def inner_handle(_request: web.Request) -> NoReturn:
             raise web.HTTPForbidden
         self.website.router.add_get('/', inner_handle)
@@ -186,7 +186,7 @@ class WebServer:
                     's' if self.ssl_context is not None else '',
                     self.bind, self.port, self.ws_prefix)
 
-    async def stop_server(self) -> None:
+    async def stop(self) -> None:
         self._request_stop = True
         await self.site.stop()
         await self.runner.cleanup()
@@ -235,21 +235,3 @@ class WebServer:
             await CodeStorage.new('codeserver.db', renew=debug),
             ssl_context
         )
-
-
-async def main(debug: bool, load_from_file: bool) -> None:
-    config = ConfigParser()
-    config.read('config.ini')
-    website = await WebServer.load_from_cfg(config, debug)
-
-    if load_from_file:
-        logger.debug('Insert passcode to database')
-        async with aiofiles.open('passcode.txt') as fin:
-            for code in await fin.readlines():
-                if len(code) == 0:
-                    break
-                await website.put_code(code.strip())
-
-    await website.start_server()
-    await website.idle()
-    await website.stop_server()

@@ -62,38 +62,14 @@ class Receiver:
         await self.bot.stop()
 
     async def start(self) -> None:
-        await asyncio.gather(self.start_bot(), self.website.start_server())
+        await asyncio.gather(self.start_bot(), self.website.start())
 
     async def stop(self) -> None:
-        await asyncio.gather(self.stop_bot(), self.website.stop_server())
+        await asyncio.gather(self.stop_bot(), self.website.stop())
 
     @staticmethod
     async def idle() -> None:
         await pyrogram.idle()
-
-
-async def main(debug: bool, load_from_file: bool) -> None:
-    config = ConfigParser()
-    config.read('config.ini')
-
-    bot = await Receiver.new(
-        config.getint('telegram', 'api_id'),
-        config.get('telegram', 'api_hash'),
-        config.get('server', 'bot_token'),
-        config.getint('server', 'listen_user'),
-        await WebServer.load_from_cfg(config, debug)
-    )
-
-    if debug or load_from_file:
-        async with aiofiles.open('passcode.txt') as fin:
-            for code in await fin.readlines():
-                if len(code) == 0:
-                    break
-                await bot.website.put_code(code.strip())
-
-    await bot.start()
-    await bot.idle()
-    await bot.stop()
 
 
 

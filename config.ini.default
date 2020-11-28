@@ -8,7 +8,8 @@ bot_token =
 channel =
 ; Authorization password
 password =
-
+; Predefined Owners
+owners = []
 
 [server]
 ; Specify listen only message from user id

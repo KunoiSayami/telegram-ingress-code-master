@@ -159,13 +159,13 @@ class PasscodeTracker(SqliteBase):
                     return None
                 return r
 
-    async def query_user(self, user_id: int) -> bool:
+    async def query_user(self, user_id: int) -> Optional[bool]:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
             async with db.execute('''SELECT * FROM "users" WHERE "id" = ?''', (user_id,)) as cursor:
                 r = await cursor.fetchone()
-                if r is None or not r[1]:
-                    return False
-                return True
+                if r is None:
+                    return None
+                return bool(r[1])
 
     async def query_all_user(self) -> Generator[int, None, None]:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
@@ -176,6 +176,12 @@ class PasscodeTracker(SqliteBase):
     async def insert_user(self, user_id: int) -> None:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
             async with db.execute('''INSERT INTO "users" VALUES (?, 1)''', (user_id,)):
+                pass
+            await db.commit()
+
+    async def delete_user(self, user_id: int) -> None:
+        async with self.lock, aiosqlite.connect(self.file_name) as db:
+            async with db.execute('''DELETE FROM "users" WHERE "id" = ?''', (user_id,)):
                 pass
             await db.commit()
 

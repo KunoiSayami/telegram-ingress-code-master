@@ -18,11 +18,13 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
+import ast
 import asyncio
 import logging
 import re
 import sys
 from configparser import ConfigParser
+from typing import List
 
 import aioredis
 import pyrogram
@@ -39,11 +41,12 @@ PASSCODE = re.compile(r'^\w{5,20}$')
 
 class Tracker:
     def __init__(self, api_id: int, api_hash: str, bot_token: str, conn: PasscodeTracker, channel_id: int,
-                 password: str, redis: aioredis.Redis):
+                 password: str, owners: str, redis: aioredis.Redis):
         self.app = Client('passcode', api_id=api_id, api_hash=api_hash, bot_token=bot_token)
         self.conn = conn
         self.channel_id = channel_id
         self.password = password
+        self.owners: List[int] = ast.literal_eval(owners)
         self.redis = redis
         self.init_message_handler()
 
@@ -67,9 +70,9 @@ class Tracker:
 
     @classmethod
     async def new(cls, api_id: int, api_hash: str, bot_token: str, file_name: str, channel_id: int,
-                  password: str, *, debug_mode: bool = False) -> 'Tracker':
+                  password: str, owners: str, *, debug_mode: bool = False) -> 'Tracker':
         self = cls(api_id, api_hash, bot_token, await PasscodeTracker.new(file_name, renew=debug_mode),
-                   channel_id, password, await aioredis.create_redis_pool('redis://localhost'))
+                   channel_id, password, owners, await aioredis.create_redis_pool('redis://localhost'))
         return self
 
     async def handle_passcode(self, client: Client, msg: Message) -> None:
@@ -95,6 +98,31 @@ class Tracker:
         args = msg.data.split()
         if len(args) != 3:
             return
+
+        # Account process
+        if args[0] == 'account':
+            _arg, sub_arg, user_id = args
+            user_id = int(user_id)
+            if sub_arg == 'grant':
+                await self.insert_authorized_user(user_id)
+                await asyncio.gather(msg.message.edit_reply_markup(
+                    InlineKeyboardMarkup([[
+                        InlineKeyboardButton('Revoke', f'account revoke {user_id}')
+                    ]])
+                ), msg.answer(), client.send_message(user_id, 'Access granted'))
+            elif sub_arg == 'deny':
+                if await self.query_authorized_user(user_id):
+                    await asyncio.gather(msg.message.edit_reply_markup(), msg.answer('Out of dated'))
+                    return
+                await asyncio.gather(msg.message.edit_reply_markup(),
+                                     client.send_message(user_id, 'Access denied'), msg.answer())
+            elif sub_arg == 'revoke':
+                await self.conn.delete_user(user_id)
+                await asyncio.gather(msg.message.edit_reply_markup(),
+                                     client.send_message(user_id, "Access revoked"), msg.answer())
+            return
+        # Account end
+
         _msg_text = f'<del>{args[1]}</del>' if args[0] == 'm' else f'<code>{args[1]}</code>'
         await asyncio.gather(
             client.edit_message_text(self.channel_id, int(args[2]), _msg_text, 'html'),
@@ -103,14 +131,29 @@ class Tracker:
             msg.answer(),
         )
 
-    async def handle_auth(self, _client: Client, msg: Message) -> None:
-        if len(msg.command) == 2 and msg.command[1] == self.password and \
-                not await self.query_authorized_user(msg.chat.id):
+    async def handle_auth(self, client: Client, msg: Message) -> None:
+        if await self.query_authorized_user(msg.chat.id):
+            await msg.reply('Already authorized')
+            return
+        if len(msg.command) == 1:
+            await asyncio.gather(*[client.send_message(
+                owner,
+                f"User [{msg.chat.id}](tg://user?id={msg.chat.id}) request to grant talk power",
+                'markdown',
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton('Agree', f'account grant {msg.chat.id}'),
+                    InlineKeyboardButton('Deny', f'account deny {msg.chat.id}')]]))
+                                   for owner in self.owners])
+        elif len(msg.command) == 2 and msg.command[1] == self.password:
             await self.insert_authorized_user(msg.chat.id)
-            await msg.reply('Authorized')
+            if len(self.owners):
+                await msg.reply('Authorized')
+            else:
+                self.owners.append(msg.chat.id)
+                await msg.reply('Authorized as owner')
 
-    async def pre_check(self, client: Client, msg: Message) -> None:
-        if await self.conn.query_user(msg.chat.id):
+    async def pre_check(self, _client: Client, msg: Message) -> None:
+        if await self.query_authorized_user(msg.chat.id):
             msg.continue_propagation()
 
     async def query_authorized_user(self, user_id: int) -> bool:
@@ -120,6 +163,11 @@ class Tracker:
         logger.info('Insert user %d to database', user_id)
         await asyncio.gather(self.conn.insert_user(user_id),
                              self.redis.sadd("tracker_user", str(user_id)))
+
+    async def delete_authorized_user(self, user_id: int) -> None:
+        logger.info('Delete user %d from database', user_id)
+        await asyncio.gather(self.conn.delete_user(user_id),
+                             self.redis.srem("tracker_user", str(user_id)))
 
     async def _load_users(self) -> None:
         await self.redis.delete('tracker_user')
@@ -133,7 +181,7 @@ async def main(debug: bool = False):
     config.read('config.ini')
     bot = await Tracker.new(config.getint('telegram', 'api_id'), config.get('telegram', 'api_hash'),
                             config.get('telegram', 'bot_token'), 'codes.db', config.getint('telegram', 'channel'),
-                            config.get('telegram', 'password'),
+                            config.get('telegram', 'password'), config.get('telegram', 'owners', fallback='[]'),
                             debug_mode=debug)
     await bot.start()
     await bot.idle()
@@ -150,4 +198,4 @@ if __name__ == '__main__':
                             format='%(asctime)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s')
     logging.getLogger('pyrogram').setLevel(logging.WARNING)
     logging.getLogger('aiosqlite').setLevel(logging.WARNING)
-    asyncio.get_event_loop().run_until_complete(main(len(sys.argv) > 1 and sys.argv[1] == '--debug'))
+    asyncio.get_event_loop().run_until_complete(main('--debug' in sys.argv))

@@ -26,7 +26,6 @@ import os
 import signal
 import ssl
 import weakref
-import warnings
 from configparser import ConfigParser
 from queue import Queue
 from typing import Dict, NoReturn, Optional, Union
@@ -63,7 +62,6 @@ class WsCoroutine:
                     await self.ws.send_json(WebServer.build_response_json(200, 0, self.last_code))
                     self.request_send.clear()
             if self.stop_event.is_set():
-                logger.debug('Coroutine is quit')
                 return
             await asyncio.sleep(0.5)
 

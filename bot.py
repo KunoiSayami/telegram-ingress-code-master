@@ -55,6 +55,8 @@ class Tracker:
         self.app.add_handler(MessageHandler(self.pre_check, filters.text & filters.private))
         self.app.add_handler(MessageHandler(self.handle_passcode, filters.text & filters.private))
         self.app.add_handler(CallbackQueryHandler(self.handle_callback_query))
+        self.app.add_handler(MessageHandler(self.pre_check_owner, filters.text & filters.private))
+        self.app.add_handler(MessageHandler(self.query_history, filters.command('h') & filters.private))
 
     async def start(self) -> None:
         await asyncio.gather(self.app.start(), self._load_users())
@@ -174,6 +176,21 @@ class Tracker:
         async for x in self.conn.query_all_user():
             await self.redis.sadd('tracker_user', str(x))
         logger.info('Load users successful')
+
+    async def pre_check_owner(self, _client: Client, msg: Message) -> None:
+        if msg.chat.id in self.owners:
+            msg.continue_propagation()
+
+    async def query_history(self, _client: Client, msg: Message) -> None:
+        if len(msg.command) > 2:
+            await msg.reply('Query format error.')
+            return
+        _, code = msg.command
+        query_obj = await self.conn.query_history(code)
+        if query_obj is not None:
+            await msg.reply(f'Find match => {query_obj[0]}')
+        else:
+            await msg.reply('404 Not found')
 
 
 async def main(debug: bool = False):

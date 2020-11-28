@@ -153,7 +153,7 @@ class PasscodeTracker(SqliteBase):
 
     async def query_history(self, s: str) -> Optional[Tuple[str, int]]:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
-            async with db.execute('''SELECT * FROM "history" WHERE "str" LIKE ?''', (f'{s}%',)) as cursor:
+            async with db.execute('''SELECT "send_by" FROM "history" WHERE "str" LIKE ?''', (f'{s}%',)) as cursor:
                 r = await cursor.fetchone()
                 if r is None:
                     return None

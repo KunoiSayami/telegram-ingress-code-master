@@ -31,7 +31,6 @@ from queue import Queue
 from typing import Dict, NoReturn, Optional, Union
 from types import FrameType
 
-import aiofiles
 import aiohttp
 from aiohttp import web
 

@@ -29,14 +29,14 @@ from typing import List
 import aioredis
 import pyrogram
 from pyrogram import Client, filters
-from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from pyrogram.handlers import CallbackQueryHandler, MessageHandler
+from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from libsqlite import PasscodeTracker
 
 logger = logging.getLogger('code_poster')
 
-PASSCODE = re.compile(r'^\w{5,20}$')
+PASSCODE_EXP = re.compile(r'^\w{5,25}$')
 
 
 class Tracker:
@@ -80,12 +80,11 @@ class Tracker:
 
     async def handle_passcode(self, client: Client, msg: Message) -> None:
         if '\n' in msg.text:
-            await self.handle_multiline_passcode(client, msg)
-            return
+            return await self.handle_multiline_passcode(client, msg)
         if len(msg.text) > 30:
             await msg.reply("Passcode length exceed")
             return
-        if PASSCODE.match(msg.text) is None:
+        if PASSCODE_EXP.match(msg.text) is None:
             await msg.reply("Passcode format error")
             return
         result = await self.conn.query(msg.text)
@@ -101,20 +100,22 @@ class Tracker:
                                     "Process", f"{'u' if result.FR else 'm'} {msg.text} {result.message_id}")]]))
 
     @staticmethod
-    async def parse_codes(passcodes: List[str], header: str) -> str:
+    def parse_codes(passcodes: List[str], header: str) -> str:
         nl = '\n'
-        return f'{header} codes:\n\n<code>{f"</code>{nl}<code>".join(passcodes)}</code>\n' if passcodes else ''
+        return f'{header} codes:\n<code>{f"</code>{nl}<code>".join(passcodes)}</code>\n' if passcodes else ''
 
     async def handle_multiline_passcode(self, client: Client, msg: Message) -> None:
         count = 0
         error_codes = []
         duplicate_codes = []
         for passcode in msg.text.splitlines(False):
-            if len(passcode) > 30 or PASSCODE.match(passcode) is None:
+            if passcode == '' or passcode.startswith('#'):
+                continue
+            if len(passcode) > 25 or PASSCODE_EXP.match(passcode) is None:
                 error_codes.append(passcode)
                 continue
             if await self.conn.query(passcode) is None:
-                _msg = await client.send_message(self.channel_id, f'<code>{msg.text}</code>', 'html')
+                _msg = await client.send_message(self.channel_id, f'<code>{passcode}</code>', 'html')
                 count += 1
                 await asyncio.gather(self.conn.insert(passcode, _msg.message_id),
                                      self.conn.insert_history(passcode, msg.chat.id),
@@ -122,7 +123,7 @@ class Tracker:
             else:
                 duplicate_codes.append(passcode)
         error_msg = self.parse_codes(error_codes, 'Error')
-        duplicate_msg = self.parse_codes(error_codes, 'Duplicate')
+        duplicate_msg = self.parse_codes(duplicate_codes, 'Duplicate')
         await msg.reply(f'{error_msg}\n{duplicate_msg}\nSuccess send: {count} passcode(s)')
 
     async def handle_callback_query(self, client: Client, msg: CallbackQuery) -> None:
@@ -148,7 +149,7 @@ class Tracker:
                 await asyncio.gather(msg.message.edit_reply_markup(),
                                      client.send_message(user_id, 'Access denied'), msg.answer())
             elif sub_arg == 'revoke':
-                await self.conn.delete_user(user_id)
+                await self.delete_authorized_user(user_id)
                 await asyncio.gather(msg.message.edit_reply_markup(),
                                      client.send_message(user_id, "Access revoked"), msg.answer())
             return
@@ -169,6 +170,7 @@ class Tracker:
             await msg.reply('Already authorized')
             return
         if len(msg.command) == 1:
+            logger.debug('User %d request to grant talk power', msg.chat.id)
             await asyncio.gather(*[client.send_message(
                 owner,
                 f"User [{msg.chat.id}](tg://user?id={msg.chat.id}) request to grant talk power",
@@ -203,7 +205,7 @@ class Tracker:
                              self.redis.srem("tracker_user", str(user_id)))
 
     async def flood_check(self, user_id: int, timeout: int = 120) -> bool:
-        if await self.redis.get(user_id) is None:
+        if await self.redis.get(f'flood_{user_id}') is None:
             await self.redis.set(f'flood_{user_id}', '1', expire=timeout)
             return False
         return True
@@ -211,6 +213,10 @@ class Tracker:
     async def _load_users(self) -> None:
         await self.redis.delete('tracker_user')
         async for x in self.conn.query_all_user():
+            await self.redis.sadd('tracker_user', str(x))
+        if not self.owners:
+            logger.warning('Not owners ')
+        for x in self.owners:
             await self.redis.sadd('tracker_user', str(x))
         logger.info('Load users successful')
 

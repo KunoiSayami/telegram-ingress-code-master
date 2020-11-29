@@ -36,7 +36,7 @@ from aiohttp import web
 
 from libsqlite import CodeStorage
 
-logger = logging.getLogger('Receiver')
+logger = logging.getLogger('receiver.website')
 logger.setLevel(logging.DEBUG)
 
 

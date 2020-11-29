@@ -19,13 +19,20 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 import asyncio
+import re
+import logging
 
 import pyrogram
 from pyrogram import Client, filters
-from pyrogram.types import Message
 from pyrogram.handlers import MessageHandler
+from pyrogram.types import Message
 
 from server.localserver import WebServer
+
+PASSCODE_EXP = re.compile(r'^\w{5,20}$')
+
+logger = logging.getLogger('receiver.bot')
+logger.setLevel(logging.DEBUG)
 
 
 class Receiver:
@@ -44,9 +51,15 @@ class Receiver:
     async def handle_incoming_passcode(self, _client: Client, msg: Message) -> None:
         # logger.info('Put passcode => %s', msg.text)
         if '\n' in msg.text:
-            for code in msg.text.splitlines():
-                await self.website.put_code(code.strip())
-        else:
+            for code in msg.text.splitlines(False):
+                code = code.strip()
+                if not len(code) or code.startswith('#'):
+                    continue
+                r = PASSCODE_EXP.match(code)
+                if r is None:
+                    logger.warning('Skipped code => %s', code)
+                await self.website.put_code(code)
+        elif not msg.text.startswith('#'):
             await self.website.put_code(msg.text)
 
     @classmethod
@@ -68,6 +81,3 @@ class Receiver:
     @staticmethod
     async def idle() -> None:
         await pyrogram.idle()
-
-
-

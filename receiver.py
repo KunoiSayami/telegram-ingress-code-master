@@ -3,7 +3,7 @@
 # receiver.py
 # Copyright (C) 2020 KunoiSayami
 #
-# This module is part of telegram-ingress-code-poster and is released under
+# This module is part of telegram-ingress-code-master and is released under
 # the AGPL v3 License: https://www.gnu.org/licenses/agpl-3.0.txt
 #
 # This program is free software: you can redistribute it and/or modify
@@ -27,7 +27,7 @@ from pyrogram import Client, filters
 from pyrogram.handlers import MessageHandler
 from pyrogram.types import Message
 
-from server.localserver import WebServer
+from localserver import WebServer
 
 PASSCODE_EXP = re.compile(r'^\w{5,20}$')
 

@@ -5,11 +5,15 @@
 * Otherwise, Fill all blanks except option (`telegram`, `bot_token`), (`telegram`, `channel`), (`telegram`, `password`)
 * Install requirements
 ```shell script
-pip install aiofiles aiohttp pyrogram aiosqlite
+pip install -r requirements.txt
+```
+* Init submodule
+```shell script
+git submodule update --init
 ```
 * Start server
 ```shell script
-./webserver_bootstrap.py
+./bootstrap.py
 ```
 
 ## Load from local
@@ -17,7 +21,7 @@ pip install aiofiles aiohttp pyrogram aiosqlite
 * If you want to read passcode from local, put passcode to `passcode.txt`, one passcode each line.
 * Run server with `--load` parameter.
 ```shell script
-./webserver_bootstrap.py --load
+./bootstrap.py --load
 ```
 
 ## Server core only
@@ -25,7 +29,7 @@ pip install aiofiles aiohttp pyrogram aiosqlite
 * If you want to run web server only, use `--nbot` parameter.
 
 ```shell script
-./webserver_bootstrap.py --nbot
+./bootstrap.py --nbot
 ```
 
 ## Configure ssl

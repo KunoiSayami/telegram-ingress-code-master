@@ -1,4 +1,8 @@
-# Telegram ingress code poster
+# Telegram ingress code provider
+
+## Forward bot
+
+Move to [telegram-ingress-code-forwarder](https://github.com/KunoiSayami/telegram-ingress-code-forwarder)
 
 ## About version
 

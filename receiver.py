@@ -43,6 +43,7 @@ class Receiver:
         self.bot = Client('receiver', api_id=api_id, api_hash=api_hash, bot_token=bot_token)
         self.listen_user = listen_user
         self.website = website
+        self.init_handle()
 
     def init_handle(self) -> None:
         self.bot.add_handler(

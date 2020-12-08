@@ -58,24 +58,24 @@ class CodeStorage(SqliteBase):
 
     async def insert_code(self, code: str) -> bool:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
-            async with db.execute('''SELECT * FROM "storage" WHERE "code" = ? ''', (code,)) as cursor:
+            async with db.execute('''SELECT * FROM "storage" WHERE "code" = ? ''', (code.lower(),)) as cursor:
                 if await cursor.fetchone() is not None:
                     return False
-            async with db.execute('''INSERT INTO "storage" ("code") VALUES (?)''', (code,)):
+            async with db.execute('''INSERT INTO "storage" ("code") VALUES (?)''', (code.lower(),)):
                 pass
             await db.commit()
             return True
 
     async def delete_code(self, code: str) -> None:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
-            async with db.execute('''DELETE FROM "storage" WHERE "code" = ?''', (code,)):
+            async with db.execute('''DELETE FROM "storage" WHERE "code" = ?''', (code.lower(),)):
                 pass
             await db.commit()
 
     async def mark_code(self, code: str, is_fr: bool, other: bool = False) -> None:
         async with self.lock, aiosqlite.connect(self.file_name) as db:
             async with db.execute('''UPDATE "storage" SET "FR" = ?, "other" = ? WHERE "code" = ?''',
-                                  (code, int(is_fr), int(other))):
+                                  (code.lower(), int(is_fr), int(other))):
                 pass
             await db.commit()
 

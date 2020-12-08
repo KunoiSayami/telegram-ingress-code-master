@@ -37,7 +37,7 @@ DNS.2 = localhost.localdomain
 #### Generate
 
 ```shell script
-openssl req -nodes -new -x509 -newkey rsa:4096 -keyout cert.key -out cert.pem -config cert.cnf
+openssl req -nodes -new -days 365 -x509 -newkey rsa:4096 -keyout cert.key -out cert.pem -config cert.cnf
 # Optional:
 # openssl x509 -outform der -in cert.pem -out cert.crt
 ```

@@ -19,6 +19,11 @@ port = 29985
 ; Connect to server use ws://localhost:29985/ws
 ws_prefix =
 
+; Authorize request option
+[auth]
+enabled = false
+passwd_sha =
+
 ; Server ssl option
 ; If enabled, please connect server use wss://
 [ssl]

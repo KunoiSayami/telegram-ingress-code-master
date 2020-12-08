@@ -25,6 +25,7 @@ import hashlib
 import os
 import signal
 import ssl
+import time
 import weakref
 from configparser import ConfigParser
 from queue import Queue
@@ -52,6 +53,7 @@ class WsCoroutine:
         self.stop_event = asyncio.Event()
         self._identify_id = ''
         self.last_code = None
+        self.ws_start_time = time.time()
 
     async def runnable(self) -> None:
         while True:
@@ -63,6 +65,10 @@ class WsCoroutine:
             if self.stop_event.is_set():
                 return
             await asyncio.sleep(0.5)
+            if self.ws_start_time is not None and time.time() - self.ws_start_time > 30:
+                await self.ws.send_json(WebServer.build_response_json(400, 5, 'Register timeout'))
+                await self.ws.close()
+                return
 
     def req(self) -> None:
         logger.debug('Request new code')
@@ -78,6 +84,7 @@ class WsCoroutine:
 
     @identify_id.setter
     def identify_id(self, identify_id: str) -> None:
+        self.ws_start_time = None
         self._identify_id = identify_id
 
     async def mark_last_code(self, is_fr: bool, is_other: bool) -> None:
@@ -87,7 +94,7 @@ class WsCoroutine:
 
 
 class WebServer:
-    def __init__(self, prefix: str, bind: str, port: int, conn: CodeStorage,
+    def __init__(self, prefix: str, bind: str, port: int, conn: CodeStorage, auth_password: Optional[str] = None,
                  ssl_context: Optional[web.SSLContext] = None):
         self.queue = Queue()
         self.ws_prefix = prefix
@@ -104,11 +111,12 @@ class WebServer:
         self._idled = False
         self.ssl_context = ssl_context
         self._request_stop = False
+        self.auth_password = auth_password
 
     @classmethod
-    async def new(cls, prefix: str, bind: str, port: int, conn: CodeStorage,
+    async def new(cls, prefix: str, bind: str, port: int, conn: CodeStorage, auth_password: Optional[str] = None,
                   ssl_context: Optional[web.SSLContext] = None):
-        self = cls(prefix, bind, port, conn, ssl_context)
+        self = cls(prefix, bind, port, conn, auth_password, ssl_context)
         return self
 
     @staticmethod
@@ -136,10 +144,17 @@ class WebServer:
                         break
                     elif msg.data.startswith('register'):
                         group = msg.data.split()
-                        if len(group) != 2:
+                        length = len(group)
+                        if length != 2 and not self.auth_password:
                             await ws.send_json(self.build_response_json(400, 2, 'Bad register request'))
                             continue
-                        wsc.identify_id = self.get_hash(group[-1])
+                        elif length != 3 and self.auth_password:
+                            await ws.send_json(self.build_response_json(400, 4, 'Password is request'))
+                            continue
+                        if self.auth_password and group[1] != self.auth_password:
+                            await ws.send_json(self.build_response_json(400, 6, 'Password incorrect'))
+                            continue
+                        wsc.identify_id = group[-1]
                         wsc.req()
                     elif msg.data == 'continue':
                         if not len(wsc.identify_id):
@@ -220,6 +235,7 @@ class WebServer:
     @classmethod
     async def load_from_cfg(cls, config: ConfigParser, debug: bool = False) -> 'WebServer':
         ssl_context = None
+        auth_password = None
         if config.getboolean('ssl', 'enabled', fallback=False):
             logger.info('SSL is enabled.')
             ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
@@ -227,10 +243,13 @@ class WebServer:
                 config.get('ssl', 'pem', fallback='cert.pem'),
                 config.get('ssl', 'key', fallback='cert.key')
             )
+        if config.getboolean('auth', 'enabled', fallback=False):
+            auth_password = config.get('auth', 'passwd_sha')
         return await cls.new(
             config.get('web', 'ws_prefix'),
             config.get('web', 'bind'),
             config.getint('web', 'port', fallback=29985),
             await CodeStorage.new('codeserver.db', renew=debug),
+            auth_password,
             ssl_context
         )

@@ -79,6 +79,5 @@ class Receiver:
     async def stop(self) -> None:
         await asyncio.gather(self.stop_bot(), self.website.stop())
 
-    @staticmethod
-    async def idle() -> None:
-        await pyrogram.idle()
+    async def idle(self) -> None:
+        await self.website.idle()

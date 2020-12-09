@@ -94,6 +94,8 @@ class WsCoroutine:
 
 
 class WebServer:
+    minimum_version = "4.1.0"
+
     def __init__(self, prefix: str, bind: str, port: int, conn: CodeStorage, auth_password: Optional[str] = None,
                  ssl_context: Optional[web.SSLContext] = None):
         self.queue = Queue()
@@ -145,6 +147,17 @@ class WebServer:
                     elif msg.data.startswith('register'):
                         group = msg.data.split()
                         length = len(group)
+                        if '_' not in group[0]:
+                            await ws.send_json(self.build_response_json(400, 7, 'Missing script version, '
+                                                                                'please upgrade script'))
+                            continue
+                        else:
+                            _, version = group[0].split('_')
+                            if version < self.minimum_version:
+                                await ws.send_json(
+                                    self.build_response_json(400, 8, 'Update script version is required'))
+                                await ws.close()
+                                continue
                         if length != 2 and not self.auth_password:
                             await ws.send_json(self.build_response_json(400, 2, 'Bad register request'))
                             continue

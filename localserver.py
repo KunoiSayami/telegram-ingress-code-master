@@ -132,7 +132,7 @@ class WebServer:
     async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
         request_next_event = asyncio.Event()
         ws = web.WebSocketResponse()
-        logger.info('Accept websocket from %s', request.remote)
+        logger.info('Accept websocket from %s', request.headers.get('X-Real-IP', request.remote))
 
         await ws.prepare(request)
         request.app['websockets'].add(ws)

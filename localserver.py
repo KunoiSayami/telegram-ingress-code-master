@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # localserver.py
-# Copyright (C) 2020 KunoiSayami
+# Copyright (C) 2020-2021 KunoiSayami
 #
 # This module is part of telegram-ingress-code-master and is released under
 # the AGPL v3 License: https://www.gnu.org/licenses/agpl-3.0.txt
@@ -39,10 +39,6 @@ from libsqlite import CodeStorage
 
 logger = logging.getLogger('receiver.website')
 logger.setLevel(logging.DEBUG)
-
-
-class NeverFetched(Exception):
-    """If user never fetched code, but want to delete, exception will raised"""
 
 
 class WsCoroutine:
@@ -155,7 +151,7 @@ class WebServer:
                             _, version = group[0].split('_')
                             if version < self.minimum_version:
                                 await ws.send_json(
-                                    self.build_response_json(400, 8, 'Update script version is required'))
+                                    self.build_response_json(400, 8, 'Upgrade script required'))
                                 await ws.close()
                                 continue
                         if length != 2 and not self.auth_password:
@@ -221,12 +217,17 @@ class WebServer:
     async def put_code(self, code: str, *, from_storage: bool = False) -> str:
         if code in self.queue.queue:
             return code
+        if code.startswith('/'):
+            return code
         self.queue.put_nowait(code)
         if not from_storage:
             if not await self.conn.insert_code(code):
                 return code
         logger.debug("Insert code => %s to database", code)
         return code
+
+    async def mark_code(self, code: str, is_fr: bool, is_other: bool = False) -> None:
+        await self.conn.mark_code(code, is_fr, is_other)
 
     async def idle(self):
         self._idled = True

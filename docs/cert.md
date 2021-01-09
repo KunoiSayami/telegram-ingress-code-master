@@ -42,4 +42,4 @@ openssl req -nodes -new -days 365 -x509 -newkey rsa:4096 -keyout cert.key -out c
 # openssl x509 -outform der -in cert.pem -out cert.crt
 ```
 
-Insert this self signed certificate to your system
+Install this self signed certificate to your system

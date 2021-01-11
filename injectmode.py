@@ -44,8 +44,7 @@ class RewriteTracker(Tracker):
         if self.hook_mark_passcode_func is not None:
             await self.hook_mark_passcode_func(passcode, is_fr)
 
-    async def register_hook_functions(self, hook_send_passcode_func: Callable[[str], Coroutine[None]],
-                                      hook_mark_passcode_func: Callable[[str, bool], Coroutine[None]]):
+    def register_hook_functions(self, hook_send_passcode_func: Callable, hook_mark_passcode_func: Callable):
         self.hook_send_passcode_func = hook_send_passcode_func
         self.hook_mark_passcode_func = hook_mark_passcode_func
 
@@ -61,8 +60,10 @@ class WebServer:
         config_tracker, config_web_server = ConfigParser(), ConfigParser()
         config_web_server.read('config.ini')
         config_tracker.read(os.path.join('forwarder', 'config.ini'))
-        return cls(await RewriteTracker.load_from_config(config_tracker, debug),
-                   await Server.load_from_cfg(config_web_server, debug))
+        return cls(
+            await RewriteTracker.load_from_config(
+                config_tracker, debug=debug, database_file=os.path.join('forwarder', 'codes.db')),
+            await Server.load_from_cfg(config_web_server, debug))
 
     async def start(self) -> None:
         await self.web_server.start()

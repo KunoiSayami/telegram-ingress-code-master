@@ -77,7 +77,7 @@ class WebServer:
         await self.web_server.idle()
 
     async def put_passcode(self, passcode: str) -> None:
-        await self.web_server.put_code(passcode)
+        await self.web_server.put_passcode(passcode)
 
     async def mark_passcode(self, passcode: str, is_fr: bool) -> None:
-        await self.web_server.mark_code(passcode, is_fr)
+        await self.web_server.mark_passcode(passcode, is_fr)

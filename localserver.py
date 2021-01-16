@@ -214,7 +214,7 @@ class WebServer:
         await self.site.stop()
         await self.runner.cleanup()
 
-    async def put_code(self, code: str, *, from_storage: bool = False) -> str:
+    async def put_passcode(self, code: str, *, from_storage: bool = False) -> str:
         if code in self.queue.queue:
             return code
         if code.startswith('/'):
@@ -226,7 +226,7 @@ class WebServer:
         logger.debug("Insert code => %s to database", code)
         return code
 
-    async def mark_code(self, code: str, is_fr: bool, is_other: bool = False) -> None:
+    async def mark_passcode(self, code: str, is_fr: bool, is_other: bool = False) -> None:
         await self.conn.mark_code(code, is_fr, is_other)
 
     async def idle(self):

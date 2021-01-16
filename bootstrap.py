@@ -54,7 +54,7 @@ async def main(debug: bool, load_from_file: bool, start_website_only: bool, is_i
             for code in await fin.readlines():
                 if len(code) == 0:
                     break
-                await code_mutable_instance.put_code(code.strip())
+                await code_mutable_instance.put_passcode(code.strip())
 
     await instance.start()
     await instance.idle()

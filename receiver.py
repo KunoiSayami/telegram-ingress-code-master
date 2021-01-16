@@ -59,9 +59,9 @@ class Receiver:
                 r = PASSCODE_EXP.match(code)
                 if r is None:
                     logger.warning('Skipped code => %s', code)
-                await self.website.put_code(code)
+                await self.website.put_passcode(code)
         elif not msg.text.startswith('#'):
-            await self.website.put_code(msg.text)
+            await self.website.put_passcode(msg.text)
 
     @classmethod
     async def new(cls, api_id: int, api_hash: str, bot_token: str, listen_user: str, website: WebServer) -> 'Receiver':

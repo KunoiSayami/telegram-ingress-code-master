@@ -20,7 +20,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 import asyncio
 from configparser import ConfigParser
-from typing import Callable, Coroutine
+from typing import Callable
 import os
 
 import aioredis

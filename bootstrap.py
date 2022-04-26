@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # bootstrap.py
-# Copyright (C) 2020-2021 KunoiSayami
-#
-# This module is part of telegram-ingress-code-master and is released under
-# the AGPL v3 License: https://www.gnu.org/licenses/agpl-3.0.txt
+# Copyright (C) 2020-2022 KunoiSayami
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -82,4 +79,4 @@ if __name__ == '__main__':
     if inject_mode and server_core_only:
         logging.warning('In inject mode, server code option will ignored')
 
-    asyncio.get_event_loop().run_until_complete(main(debug_mode, _load_from_file, server_core_only, inject_mode))
+    asyncio.run(main(debug_mode, _load_from_file, server_core_only, inject_mode))

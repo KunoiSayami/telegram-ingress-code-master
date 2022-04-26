@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 # libsqlite.py
-# Copyright (C) 2020-2021 KunoiSayami
-#
-# This module is part of telegram-ingress-code-master and is released under
-# the AGPL v3 License: https://www.gnu.org/licenses/agpl-3.0.txt
+# Copyright (C) 2020-2022 KunoiSayami
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -17,7 +14,6 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
-import asyncio
 import logging
 from typing import Optional
 

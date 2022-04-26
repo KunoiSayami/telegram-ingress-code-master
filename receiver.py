@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # receiver.py
-# Copyright (C) 2020-2021 KunoiSayami
-#
-# This module is part of telegram-ingress-code-master and is released under
-# the AGPL v3 License: https://www.gnu.org/licenses/agpl-3.0.txt
+# Copyright (C) 2020-2022 KunoiSayami
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -22,7 +19,6 @@ import asyncio
 import re
 import logging
 
-import pyrogram
 from pyrogram import Client, filters
 from pyrogram.handlers import MessageHandler
 from pyrogram.types import Message
